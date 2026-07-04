@@ -1,0 +1,24 @@
+{
+  "item_id": "MLM2075842359",
+  "title": "Ferenku Set Palo De Lluvia Maracas Guaje Danza Azteca",
+  "permalink": "https://articulo.mercadolibre.com.mx/MLM-2075842359-ferenku-set-palo-de-lluvia-maracas-guaje-danza-azteca-_JM",
+  "price": 179.10,
+  "original_price": 199.00,
+  "discount": "10%",
+  "currency": "MXN",
+  "financing": "3 meses sin intereses de $59",
+  "rating": 5.0,
+  "free_shipping": true,
+  "condition": "new (inferred from listing)",
+  "brand": "Ferenku",
+  "category": "Instrumentos musicales artesanales / Danza azteca",
+  "description": "Pieza artesanal. Este modelo es perfecto para agregar un toque único a tus actuaciones de danza azteca o simplemente para disfrutar de su sonido relajante en casa. El diseño garantiza su durabilidad y calidad a través del tiempo.",
+  "attributes": {},
+  "pictures": [],
+  "downloaded_images": [],
+  "_provenance": {
+    "collected": "2026-07-04",
+    "method": "search-engine snippets only",
+    "note": "Direct scraping (page, API, image CDN) was blocked by the execution environment's network policy (HTTP 403 at the egress gateway for *.mercadolibre.com.mx, api.mercadolibre.com). Characteristics tab, full description, seller info, sold quantity and images are pending. Run scrape_ml_item.py MLM2075842359 from a network with access to MercadoLibre to fill in the missing fields and download images."
+  }
+}
