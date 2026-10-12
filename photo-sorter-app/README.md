@@ -31,8 +31,12 @@ To install a newer build, uninstall the old one first.
      (no upload, ~400 labels such as Dog, Cat, Beach, Food, Flower).
      Each photo goes to its strongest label. To get only the albums you care
      about, list labels like `Dog, Cat`; everything else goes to *Other*.
-3. Tap **Preview albums**. Nothing on your phone changes yet.
-4. Tap **Copy into albums** to keep your originals in place, or
+3. Optionally set **Photos to review** (e.g. `200`) to work in batches,
+   newest photos first. Leave it empty to review the whole folder. With
+   **Skip photos already sorted** on (the default), photos already in the
+   `Sorted` folder are skipped, so each run picks up the next batch.
+4. Tap **Preview albums**. Nothing on your phone changes yet.
+5. Tap **Copy into albums** to keep your originals in place, or
    **Move into albums**. The albums are created as subfolders of a
    `Sorted` folder inside the folder you picked, e.g. `DCIM/Camera/Sorted/Dog`,
    and show up as albums in your gallery app.

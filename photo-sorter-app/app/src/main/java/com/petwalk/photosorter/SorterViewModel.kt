@@ -25,6 +25,8 @@ data class UiState(
     val granularity: Granularity = Granularity.CITY,
     val minConfidence: Float = 0.6f,
     val focusLabels: String = "",
+    val limit: String = "", // empty = all photos
+    val skipSorted: Boolean = true,
     val busy: Boolean = false,
     val progress: Float = 0f,
     val status: String? = null,
@@ -79,6 +81,8 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
     fun setGranularity(granularity: Granularity) = reset { it.copy(granularity = granularity) }
     fun setMinConfidence(value: Float) = reset { it.copy(minConfidence = value) }
     fun setFocusLabels(value: String) = reset { it.copy(focusLabels = value) }
+    fun setLimit(value: String) = reset { it.copy(limit = value.filter(Char::isDigit).take(6)) }
+    fun setSkipSorted(value: Boolean) = reset { it.copy(skipSorted = value) }
 
     // Any settings change makes the current preview stale.
     private fun reset(change: (UiState) -> UiState) =
@@ -90,8 +94,25 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
         if (s.busy) return
         viewModelScope.launch {
             _state.update { it.copy(busy = true, progress = 0f, groups = emptyList(), status = "Reading folder…") }
+            var summary = ""
             val groups = withContext(Dispatchers.IO) {
-                val photos = store.photos(folder)
+                var candidates = store.photos(folder)
+                val inFolder = candidates.size
+                if (s.skipSorted) {
+                    val done = store.sortedNames(folder)
+                    candidates = candidates.filter { it.name !in done }
+                }
+                val limit = s.limit.toIntOrNull()?.takeIf { it > 0 }
+                val photos = if (limit != null) candidates.take(limit) else candidates
+                summary = buildString {
+                    append("Reviewed ${photos.size} of $inFolder photos in the folder")
+                    if (limit != null) append(" (newest first)")
+                    val skipped = inFolder - candidates.size
+                    if (skipped > 0) append(", skipping $skipped already sorted")
+                    val left = candidates.size - photos.size
+                    if (left > 0) append(". $left still to go")
+                    append(".")
+                }
                 val byFolder = LinkedHashMap<String, MutableList<Photo>>()
                 suspend fun assign(group: suspend (Photo) -> String) {
                     photos.forEachIndexed { i, photo ->
@@ -118,7 +139,11 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     busy = false,
                     groups = groups,
-                    status = if (total == 0) "No photos in this folder." else "$total photos → ${groups.size} albums. Nothing has been changed yet.",
+                    status = if (total == 0) {
+                        "$summary Nothing to sort."
+                    } else {
+                        "$summary ${groups.size} albums. Nothing has been changed yet."
+                    },
                 )
             }
         }

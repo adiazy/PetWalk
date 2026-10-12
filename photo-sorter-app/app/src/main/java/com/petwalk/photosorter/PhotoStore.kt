@@ -29,34 +29,53 @@ class PhotoStore(private val resolver: ContentResolver) {
         null
     }
 
-    /** All images in the folder and its subfolders, except our own output folder. */
+    /** All images in the folder and its subfolders, newest first, except our own output folder. */
     fun photos(tree: Uri): List<Photo> {
-        val photos = mutableListOf<Photo>()
-        fun walk(dirId: String, depth: Int) {
-            val dirUri = DocumentsContract.buildDocumentUriUsingTree(tree, dirId)
-            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, dirId)
-            resolver.query(
-                children,
-                arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE),
-                null, null, null,
-            )?.use { c ->
-                while (c.moveToNext()) {
-                    val id = c.getString(0) ?: continue
-                    val name = c.getString(1) ?: continue
-                    val mime = c.getString(2) ?: continue
-                    when {
-                        mime == Document.MIME_TYPE_DIR -> {
-                            val skip = name.startsWith(".") || (depth == 0 && name == OUTPUT_DIR)
-                            if (!skip) walk(id, depth + 1)
-                        }
-                        mime.startsWith("image/") ->
-                            photos += Photo(DocumentsContract.buildDocumentUriUsingTree(tree, id), dirUri, name, mime)
-                    }
+        val photos = mutableListOf<Pair<Photo, Long>>()
+        walk(tree, DocumentsContract.getTreeDocumentId(tree), skipOutput = true) { photo, modified ->
+            photos += photo to modified
+        }
+        return photos.sortedByDescending { it.second }.map { it.first }
+    }
+
+    /** Names of the photos already in the Sorted folder, so they can be skipped. */
+    fun sortedNames(tree: Uri): Set<String> {
+        val outputDir = findChildDir(tree, rootOf(tree), OUTPUT_DIR) ?: return emptySet()
+        val names = HashSet<String>()
+        walk(tree, DocumentsContract.getDocumentId(outputDir), skipOutput = false) { photo, _ -> names += photo.name }
+        return names
+    }
+
+    private fun walk(tree: Uri, dirId: String, skipOutput: Boolean, onPhoto: (Photo, Long) -> Unit) {
+        val dirUri = DocumentsContract.buildDocumentUriUsingTree(tree, dirId)
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, dirId)
+        val subdirs = mutableListOf<String>()
+        resolver.query(
+            children,
+            arrayOf(
+                Document.COLUMN_DOCUMENT_ID,
+                Document.COLUMN_DISPLAY_NAME,
+                Document.COLUMN_MIME_TYPE,
+                Document.COLUMN_LAST_MODIFIED,
+            ),
+            null, null, null,
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val id = c.getString(0) ?: continue
+                val name = c.getString(1) ?: continue
+                val mime = c.getString(2) ?: continue
+                when {
+                    mime == Document.MIME_TYPE_DIR ->
+                        if (!name.startsWith(".") && !(skipOutput && name == OUTPUT_DIR)) subdirs += id
+                    mime.startsWith("image/") -> onPhoto(
+                        Photo(DocumentsContract.buildDocumentUriUsingTree(tree, id), dirUri, name, mime),
+                        if (c.isNull(3)) 0L else c.getLong(3),
+                    )
                 }
             }
         }
-        walk(DocumentsContract.getTreeDocumentId(tree), 0)
-        return photos.sortedBy { it.name }
+        // Only the top level holds our output folder; deeper "Sorted" folders are the user's own.
+        subdirs.forEach { walk(tree, it, skipOutput = false, onPhoto) }
     }
 
     /** GPS coordinates from the photo's EXIF data, or null if it has none. */
