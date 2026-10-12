@@ -1,0 +1,50 @@
+name: Photo Sorter Android app
+
+on:
+  push:
+    paths:
+      - "photo-sorter-app/**"
+      - ".github/workflows/android-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write # to publish the APK as a release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: photo-sorter-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk PhotoSorter.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhotoSorter-apk
+          path: photo-sorter-app/PhotoSorter.apk
+
+      # A fixed release tag gives a stable download link you can open on the phone.
+      - name: Publish "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete photo-sorter-latest --yes --cleanup-tag || true
+          gh release create photo-sorter-latest PhotoSorter.apk \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Photo Sorter (latest build)" \
+            --notes "Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}. Open this page on your Android phone and tap PhotoSorter.apk to install."

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A folder with a map pin, drawn inside the 66dp adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,38 L48,38 L53,43 L78,43 Q80,43 80,45 L80,72 Q80,74 78,74 L30,74 Q28,74 28,72 L28,40 Q28,38 30,38 Z" />
+    <path
+        android:fillColor="#2E6B4F"
+        android:fillType="evenOdd"
+        android:pathData="M54,48 C49,48 46,51.5 46,55.5 C46,61 54,69 54,69 C54,69 62,61 62,55.5 C62,51.5 59,48 54,48 Z M54,52.5 A3,3 0 1,1 54,58.5 A3,3 0 1,1 54,52.5 Z" />
+</vector>
