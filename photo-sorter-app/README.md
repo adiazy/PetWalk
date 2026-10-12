@@ -17,10 +17,12 @@ To install a newer build, uninstall the old one first.
 
 ## Use
 
-1. Allow photo access. Also allow **location** access when Android asks.
-   Otherwise Android hides the GPS data in your photos and location sorting
-   finds nothing.
-2. Pick an album (it defaults to **Camera**) and a mode:
+1. Tap **Choose folder** and pick the folder to sort, for example
+   `DCIM/Camera`. The app asks for no other permissions. It can only see
+   the folder you pick and its subfolders, and it gives up access to the
+   previous folder when you pick a new one. (Android doesn't let apps pick
+   the root of internal storage or `Download`; pick a folder inside them.)
+2. Choose a mode:
    - **By location**: photos are grouped by city, region or country.
      Place names come from Android's geocoder, which needs internet.
      Offline, photos are grouped by rounded coordinates instead.
@@ -31,10 +33,11 @@ To install a newer build, uninstall the old one first.
      about, list labels like `Dog, Cat`; everything else goes to *Other*.
 3. Tap **Preview albums**. Nothing on your phone changes yet.
 4. Tap **Copy into albums** to keep your originals in place, or
-   **Move into albums** (Android 11+, asks for confirmation).
-   The albums appear under `Pictures/Sorted/` in your gallery app.
+   **Move into albums**. The albums are created as subfolders of a
+   `Sorted` folder inside the folder you picked, e.g. `DCIM/Camera/Sorted/Dog`,
+   and show up as albums in your gallery app.
 
-Already-sorted photos in `Pictures/Sorted/` are skipped the next time you sort.
+The `Sorted` folder is skipped the next time you sort the same folder.
 
 ## Build it yourself
 
@@ -51,7 +54,7 @@ thing and publishes the APK as the `photo-sorter-latest` release.
 
 | File | What it does |
 |---|---|
-| `PhotoStore.kt` | Reads albums, photos and EXIF GPS from MediaStore; copies and moves files |
+| `PhotoStore.kt` | Lists photos and reads EXIF GPS in the picked folder (Storage Access Framework); copies and moves files |
 | `Groupers.kt` | `LocationGrouper` (Geocoder) and `ContentGrouper` (ML Kit labeling) |
 | `SorterViewModel.kt` | Runs the preview, copy and move steps in the background |
 | `MainActivity.kt` | The Compose UI and permission requests |

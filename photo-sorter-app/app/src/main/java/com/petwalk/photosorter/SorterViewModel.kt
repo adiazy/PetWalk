@@ -1,7 +1,9 @@
 package com.petwalk.photosorter
 
 import android.app.Application
-import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -17,8 +19,8 @@ enum class Mode(val label: String) { LOCATION("By location"), CONTENT("By conten
 data class Group(val name: String, val photos: List<Photo>)
 
 data class UiState(
-    val albums: List<Album> = emptyList(),
-    val album: Album? = null,
+    val folder: Uri? = null,
+    val folderName: String? = null,
     val mode: Mode = Mode.LOCATION,
     val granularity: Granularity = Granularity.CITY,
     val minConfidence: Float = 0.6f,
@@ -32,21 +34,47 @@ data class UiState(
 class SorterViewModel(app: Application) : AndroidViewModel(app) {
     val store = PhotoStore(app.contentResolver)
 
+    private val resolver = app.contentResolver
+    private val prefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
-    fun loadAlbums() {
-        viewModelScope.launch {
-            val albums = withContext(Dispatchers.IO) { store.albums() }
-            _state.update { s ->
-                val keep = albums.firstOrNull { it.id == s.album?.id && s.album != null }
-                val camera = albums.firstOrNull { it.name.equals("Camera", ignoreCase = true) }
-                s.copy(albums = albums, album = keep ?: camera ?: albums.firstOrNull())
-            }
+    init {
+        // Reopen the last folder, as long as Android still lets us access it.
+        val saved = prefs.getString(KEY_FOLDER, null)?.let(Uri::parse)
+        if (saved != null && resolver.persistedUriPermissions.any { it.uri == saved }) {
+            showFolder(saved)
         }
     }
 
-    fun setAlbum(album: Album) = reset { it.copy(album = album) }
+    /** Called with the folder the user picked in the system folder picker. */
+    fun setFolder(uri: Uri) {
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        // Give up access to every other folder, so the app only ever holds the current one.
+        resolver.persistedUriPermissions.filter { it.uri != uri }.forEach {
+            try {
+                resolver.releasePersistableUriPermission(it.uri, flags)
+            } catch (ignored: SecurityException) {
+            }
+        }
+        try {
+            resolver.takePersistableUriPermission(uri, flags)
+        } catch (e: SecurityException) {
+            _state.update { it.copy(status = "Android didn't allow access to that folder. Try another one.") }
+            return
+        }
+        prefs.edit().putString(KEY_FOLDER, uri.toString()).apply()
+        showFolder(uri)
+    }
+
+    private fun showFolder(uri: Uri) {
+        reset { it.copy(folder = uri, folderName = null) }
+        viewModelScope.launch {
+            val name = withContext(Dispatchers.IO) { store.folderName(uri) }
+            _state.update { if (it.folder == uri) it.copy(folderName = name ?: "Selected folder") else it }
+        }
+    }
+
     fun setMode(mode: Mode) = reset { it.copy(mode = mode) }
     fun setGranularity(granularity: Granularity) = reset { it.copy(granularity = granularity) }
     fun setMinConfidence(value: Float) = reset { it.copy(minConfidence = value) }
@@ -58,11 +86,12 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
 
     fun analyze() {
         val s = _state.value
+        val folder = s.folder ?: return
         if (s.busy) return
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, progress = 0f, groups = emptyList(), status = "Reading photos…") }
+            _state.update { it.copy(busy = true, progress = 0f, groups = emptyList(), status = "Reading folder…") }
             val groups = withContext(Dispatchers.IO) {
-                val photos = store.photos(s.album?.id)
+                val photos = store.photos(folder)
                 val byFolder = LinkedHashMap<String, MutableList<Photo>>()
                 suspend fun assign(group: suspend (Photo) -> String) {
                     photos.forEachIndexed { i, photo ->
@@ -89,35 +118,30 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     busy = false,
                     groups = groups,
-                    status = if (total == 0) "No photos in this album." else "$total photos → ${groups.size} albums. Nothing has been changed yet.",
+                    status = if (total == 0) "No photos in this folder." else "$total photos → ${groups.size} albums. Nothing has been changed yet.",
                 )
             }
         }
     }
 
-    fun copyAll() = transfer("Copied") { photo, folder -> store.copy(photo, folder) }
+    fun copyAll() = transfer("Copied") { folder, photo, group -> store.copy(folder, photo, group) }
 
-    fun moveAll() = transfer("Moved") { photo, folder -> store.move(photo, folder) }
+    fun moveAll() = transfer("Moved") { folder, photo, group -> store.move(folder, photo, group) }
 
-    fun writeRequest(): PendingIntent? = try {
-        store.writeRequest(_state.value.groups.flatMap { it.photos })
-    } catch (e: Exception) {
-        _state.update { it.copy(status = "Couldn't ask for permission to move: ${e.message}") }
-        null
-    }
-
-    private fun transfer(verb: String, action: (Photo, String) -> Boolean) {
-        val groups = _state.value.groups
-        if (groups.isEmpty() || _state.value.busy) return
+    private fun transfer(verb: String, action: (Uri, Photo, String) -> Boolean) {
+        val s = _state.value
+        val folder = s.folder ?: return
+        if (s.groups.isEmpty() || s.busy) return
         viewModelScope.launch {
             _state.update { it.copy(busy = true, progress = 0f) }
-            val total = groups.sumOf { it.photos.size }
+            val total = s.groups.sumOf { it.photos.size }
             var done = 0
             var failed = 0
             withContext(Dispatchers.IO) {
-                for (group in groups) {
+                store.resetFolders()
+                for (group in s.groups) {
                     for (photo in group.photos) {
-                        if (!action(photo, group.name)) failed++
+                        if (!action(folder, photo, group.name)) failed++
                         done++
                         _state.update { it.copy(progress = done.toFloat() / total, status = "$verb $done of $total…") }
                     }
@@ -128,11 +152,13 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     busy = false,
                     groups = emptyList(),
-                    status = "$verb ${total - failed} photos into ${PhotoStore.OUTPUT_DIR}. " +
-                        "Open your gallery app to see the new albums.$failNote",
+                    status = "$verb ${total - failed} photos into ${it.folderName}/${PhotoStore.OUTPUT_DIR}.$failNote",
                 )
             }
-            loadAlbums()
         }
+    }
+
+    private companion object {
+        const val KEY_FOLDER = "folder"
     }
 }

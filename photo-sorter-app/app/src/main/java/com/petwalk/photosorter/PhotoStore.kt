@@ -1,89 +1,68 @@
 package com.petwalk.photosorter
 
-import android.app.PendingIntent
 import android.content.ContentResolver
-import android.content.ContentUris
-import android.content.ContentValues
 import android.graphics.Bitmap
+import android.graphics.ImageDecoder
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
-import android.util.Size
+import android.provider.DocumentsContract
+import android.provider.DocumentsContract.Document
 import androidx.exifinterface.media.ExifInterface
-import java.io.InputStream
+import kotlin.math.max
+import kotlin.math.min
 
-/** A gallery album (MediaStore bucket). [id] is null for "All photos". */
-data class Album(val id: String?, val name: String, val count: Int)
+/** An image inside the chosen folder. [parent] is the folder it currently sits in. */
+data class Photo(val uri: Uri, val parent: Uri, val name: String, val mimeType: String)
 
-data class Photo(val uri: Uri, val name: String, val mimeType: String, val dateTaken: Long)
-
-/** Reads photos from, and writes sorted albums to, the device's shared photo library. */
+/**
+ * Reads and writes photos inside one folder the user picked with the system folder picker.
+ * The app has no access to anything outside that folder.
+ */
 class PhotoStore(private val resolver: ContentResolver) {
 
-    private val images = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    private val dirCache = HashMap<String, Uri>()
 
-    // Skip anything we already sorted, so re-running doesn't pick up our own copies.
-    private val notSorted =
-        "(${MediaStore.Images.Media.RELATIVE_PATH} IS NULL OR ${MediaStore.Images.Media.RELATIVE_PATH} NOT LIKE ?)"
-    private val notSortedArgs = arrayOf("$OUTPUT_DIR/%")
-
-    fun albums(): List<Album> {
-        val buckets = LinkedHashMap<String, Pair<String, Int>>()
-        var total = 0
-        resolver.query(
-            images,
-            arrayOf(MediaStore.Images.Media.BUCKET_ID, MediaStore.Images.Media.BUCKET_DISPLAY_NAME),
-            notSorted, notSortedArgs, null,
-        )?.use { c ->
-            val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
-            val nameCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
-            while (c.moveToNext()) {
-                total++
-                val id = c.getString(idCol) ?: continue
-                val (name, count) = buckets[id] ?: ((c.getString(nameCol) ?: "Unnamed") to 0)
-                buckets[id] = name to count + 1
-            }
+    fun folderName(tree: Uri): String? = try {
+        resolver.query(rootOf(tree), arrayOf(Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
         }
-        val albums = buckets.map { (id, v) -> Album(id, v.first, v.second) }.sortedByDescending { it.count }
-        return listOf(Album(null, "All photos", total)) + albums
+    } catch (e: Exception) {
+        null
     }
 
-    fun photos(albumId: String?): List<Photo> {
-        val selection = if (albumId == null) notSorted else "$notSorted AND ${MediaStore.Images.Media.BUCKET_ID} = ?"
-        val args = if (albumId == null) notSortedArgs else notSortedArgs + albumId
+    /** All images in the folder and its subfolders, except our own output folder. */
+    fun photos(tree: Uri): List<Photo> {
         val photos = mutableListOf<Photo>()
-        resolver.query(
-            images,
-            arrayOf(
-                MediaStore.Images.Media._ID,
-                MediaStore.Images.Media.DISPLAY_NAME,
-                MediaStore.Images.Media.MIME_TYPE,
-                MediaStore.Images.Media.DATE_TAKEN,
-            ),
-            selection, args, "${MediaStore.Images.Media.DATE_TAKEN} DESC",
-        )?.use { c ->
-            val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val nameCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            val mimeCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
-            val dateCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_TAKEN)
-            while (c.moveToNext()) {
-                val id = c.getLong(idCol)
-                photos += Photo(
-                    uri = ContentUris.withAppendedId(images, id),
-                    name = c.getString(nameCol) ?: "photo_$id.jpg",
-                    mimeType = c.getString(mimeCol) ?: "image/jpeg",
-                    dateTaken = c.getLong(dateCol),
-                )
+        fun walk(dirId: String, depth: Int) {
+            val dirUri = DocumentsContract.buildDocumentUriUsingTree(tree, dirId)
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, dirId)
+            resolver.query(
+                children,
+                arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE),
+                null, null, null,
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getString(0) ?: continue
+                    val name = c.getString(1) ?: continue
+                    val mime = c.getString(2) ?: continue
+                    when {
+                        mime == Document.MIME_TYPE_DIR -> {
+                            val skip = name.startsWith(".") || (depth == 0 && name == OUTPUT_DIR)
+                            if (!skip) walk(id, depth + 1)
+                        }
+                        mime.startsWith("image/") ->
+                            photos += Photo(DocumentsContract.buildDocumentUriUsingTree(tree, id), dirUri, name, mime)
+                    }
+                }
             }
         }
-        return photos
+        walk(DocumentsContract.getTreeDocumentId(tree), 0)
+        return photos.sortedBy { it.name }
     }
 
     /** GPS coordinates from the photo's EXIF data, or null if it has none. */
     fun location(photo: Photo): Pair<Double, Double>? {
         val exif = try {
-            openOriginal(photo.uri)?.use { ExifInterface(it) }
+            resolver.openInputStream(photo.uri)?.use { ExifInterface(it) }
         } catch (e: Exception) {
             null
         }
@@ -92,61 +71,85 @@ class PhotoStore(private val resolver: ContentResolver) {
         return latLong[0] to latLong[1]
     }
 
+    /** A downscaled, correctly rotated bitmap whose short side is at least [size] px. */
     fun thumbnail(uri: Uri, size: Int): Bitmap? = try {
-        resolver.loadThumbnail(uri, Size(size, size), null)
+        ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
+            val shortest = min(info.size.width, info.size.height)
+            decoder.setTargetSampleSize(max(1, shortest / size))
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE // ML Kit can't read hardware bitmaps
+        }
     } catch (e: Exception) {
         null
     }
 
-    /** Copies the photo (with its original metadata) into Pictures/Sorted/<folder>/. */
-    fun copy(photo: Photo, folder: String): Boolean {
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, photo.name)
-            put(MediaStore.Images.Media.MIME_TYPE, photo.mimeType)
-            put(MediaStore.Images.Media.RELATIVE_PATH, "$OUTPUT_DIR/$folder/")
-            put(MediaStore.Images.Media.IS_PENDING, 1)
-            if (photo.dateTaken > 0) put(MediaStore.Images.Media.DATE_TAKEN, photo.dateTaken)
+    /** Call before a copy or move so folders are looked up fresh. */
+    fun resetFolders() = dirCache.clear()
+
+    /** Copies the photo into <folder>/Sorted/<group>/. */
+    fun copy(tree: Uri, photo: Photo, group: String): Boolean {
+        val created = try {
+            DocumentsContract.createDocument(resolver, outputDir(tree, group), photo.mimeType, photo.name)
+        } catch (e: Exception) {
+            null
         }
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val dest = resolver.insert(collection, values) ?: return false
+        val dest = created ?: return false
         return try {
-            openOriginal(photo.uri)!!.use { input ->
+            resolver.openInputStream(photo.uri)!!.use { input ->
                 resolver.openOutputStream(dest)!!.use { output -> input.copyTo(output) }
             }
-            resolver.update(dest, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
             true
         } catch (e: Exception) {
-            resolver.delete(dest, null, null)
+            try {
+                DocumentsContract.deleteDocument(resolver, dest)
+            } catch (ignored: Exception) {
+            }
             false
         }
     }
 
-    /** Asks the user to let us modify these photos (Android 11+), which moving needs. */
-    fun writeRequest(photos: List<Photo>): PendingIntent? =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            MediaStore.createWriteRequest(resolver, photos.map { it.uri })
-        } else {
-            null
-        }
-
-    /** Moves the photo into Pictures/Sorted/<folder>/. Needs a granted [writeRequest]. */
-    fun move(photo: Photo, folder: String): Boolean = try {
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.RELATIVE_PATH, "$OUTPUT_DIR/$folder/")
-        }
-        resolver.update(photo.uri, values, null, null) > 0
+    /** Moves the photo into <folder>/Sorted/<group>/. */
+    fun move(tree: Uri, photo: Photo, group: String): Boolean = try {
+        DocumentsContract.moveDocument(resolver, photo.uri, photo.parent, outputDir(tree, group)) != null
     } catch (e: Exception) {
         false
     }
 
-    // The original file keeps its GPS tags; the default stream has them redacted.
-    private fun openOriginal(uri: Uri): InputStream? = try {
-        resolver.openInputStream(MediaStore.setRequireOriginal(uri))
-    } catch (e: Exception) {
-        resolver.openInputStream(uri)
+    private fun rootOf(tree: Uri): Uri =
+        DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+
+    /** Finds or creates <folder>/Sorted/<group>, where [group] may contain "/". */
+    private fun outputDir(tree: Uri, group: String): Uri {
+        var path = ""
+        var dir = rootOf(tree)
+        for (name in listOf(OUTPUT_DIR) + group.split("/")) {
+            path += "/$name"
+            val parent = dir
+            dir = dirCache.getOrPut(path) {
+                findChildDir(tree, parent, name)
+                    ?: DocumentsContract.createDocument(resolver, parent, Document.MIME_TYPE_DIR, name)
+                    ?: error("Couldn't create folder $path")
+            }
+        }
+        return dir
+    }
+
+    private fun findChildDir(tree: Uri, parent: Uri, name: String): Uri? {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getDocumentId(parent))
+        resolver.query(
+            children,
+            arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE),
+            null, null, null,
+        )?.use { c ->
+            while (c.moveToNext()) {
+                if (c.getString(1) == name && c.getString(2) == Document.MIME_TYPE_DIR) {
+                    return DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0))
+                }
+            }
+        }
+        return null
     }
 
     companion object {
-        val OUTPUT_DIR = "${Environment.DIRECTORY_PICTURES}/Sorted"
+        const val OUTPUT_DIR = "Sorted"
     }
 }
