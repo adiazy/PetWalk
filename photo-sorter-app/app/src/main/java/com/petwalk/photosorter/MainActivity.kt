@@ -211,12 +211,22 @@ private fun Controls(state: UiState, viewModel: SorterViewModel) {
             onValueChange = viewModel::setLimit,
             label = { Text("Photos to review") },
             placeholder = { Text("All") },
-            supportingText = { Text("Newest first. Leave empty to review every photo in the folder.") },
+            supportingText = { Text("Leave empty to review every photo in the folder.") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true,
             enabled = !state.busy,
             modifier = Modifier.fillMaxWidth(),
         )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(true to "Oldest first", false to "Newest first").forEach { (oldest, label) ->
+                FilterChip(
+                    selected = state.oldestFirst == oldest,
+                    onClick = { viewModel.setOldestFirst(oldest) },
+                    label = { Text(label) },
+                    enabled = !state.busy,
+                )
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(
                 checked = state.skipSorted,

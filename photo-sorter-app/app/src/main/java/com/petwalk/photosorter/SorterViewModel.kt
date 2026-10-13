@@ -27,6 +27,7 @@ data class UiState(
     val focusLabels: String = "",
     val limit: String = "", // empty = all photos
     val skipSorted: Boolean = true,
+    val oldestFirst: Boolean = true,
     val busy: Boolean = false,
     val progress: Float = 0f,
     val status: String? = null,
@@ -83,6 +84,7 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
     fun setFocusLabels(value: String) = reset { it.copy(focusLabels = value) }
     fun setLimit(value: String) = reset { it.copy(limit = value.filter(Char::isDigit).take(6)) }
     fun setSkipSorted(value: Boolean) = reset { it.copy(skipSorted = value) }
+    fun setOldestFirst(value: Boolean) = reset { it.copy(oldestFirst = value) }
 
     // Any settings change makes the current preview stale.
     private fun reset(change: (UiState) -> UiState) =
@@ -96,7 +98,7 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(busy = true, progress = 0f, groups = emptyList(), status = "Reading folder…") }
             var summary = ""
             val groups = withContext(Dispatchers.IO) {
-                var candidates = store.photos(folder)
+                var candidates = store.photos(folder).let { if (s.oldestFirst) it else it.asReversed() }
                 val inFolder = candidates.size
                 if (s.skipSorted) {
                     val done = store.sortedNames(folder)
@@ -106,7 +108,7 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
                 val photos = if (limit != null) candidates.take(limit) else candidates
                 summary = buildString {
                     append("Reviewed ${photos.size} of $inFolder photos in the folder")
-                    if (limit != null) append(" (newest first)")
+                    if (limit != null) append(if (s.oldestFirst) " (oldest first)" else " (newest first)")
                     val skipped = inFolder - candidates.size
                     if (skipped > 0) append(", skipping $skipped already sorted")
                     val left = candidates.size - photos.size

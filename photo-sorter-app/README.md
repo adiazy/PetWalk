@@ -32,7 +32,7 @@ To install a newer build, uninstall the old one first.
      Each photo goes to its strongest label. To get only the albums you care
      about, list labels like `Dog, Cat`; everything else goes to *Other*.
 3. Optionally set **Photos to review** (e.g. `200`) to work in batches,
-   newest photos first. Leave it empty to review the whole folder. With
+   starting from the **oldest** photos (or switch to **Newest first**). Leave it empty to review the whole folder. With
    **Skip photos already sorted** on (the default), photos already in the
    `Sorted` folder are skipped, so each run picks up the next batch.
 4. Tap **Preview albums**. Nothing on your phone changes yet.

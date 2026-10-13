@@ -29,13 +29,13 @@ class PhotoStore(private val resolver: ContentResolver) {
         null
     }
 
-    /** All images in the folder and its subfolders, newest first, except our own output folder. */
+    /** All images in the folder and its subfolders, oldest first, except our own output folder. */
     fun photos(tree: Uri): List<Photo> {
         val photos = mutableListOf<Pair<Photo, Long>>()
         walk(tree, DocumentsContract.getTreeDocumentId(tree), skipOutput = true) { photo, modified ->
             photos += photo to modified
         }
-        return photos.sortedByDescending { it.second }.map { it.first }
+        return photos.sortedBy { it.second }.map { it.first }
     }
 
     /** Names of the photos already in the Sorted folder, so they can be skipped. */
