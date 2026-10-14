@@ -150,7 +150,7 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(busy = false, status = e.message) }
                 return@launch
             } catch (e: IOException) {
-                _state.update { it.copy(busy = false, status = "Couldn't download the recognition model: ${e.message} Check your internet connection and try again.") }
+                _state.update { it.copy(busy = false, status = "Couldn't prepare the recognition model: ${e.message}") }
                 return@launch
             }
             val total = groups.sumOf { it.photos.size }
@@ -210,9 +210,14 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
             Mode.CONTENT -> when (s.engine) {
                 Engine.ON_DEVICE -> {
                     val app = getApplication<Application>()
-                    if (!ClipFiles.isDownloaded(app)) {
-                        _state.update { it.copy(status = "Downloading the recognition model (one time, about 150 MB)…") }
-                        ClipFiles.download(app) { p -> _state.update { it.copy(progress = p) } }
+                    if (!ClipFiles.isReady(app)) {
+                        val status = if (ClipFiles.isBundled(app)) {
+                            "Unpacking the recognition model (one time only)…"
+                        } else {
+                            "Downloading the recognition model (one time, about 150 MB)…"
+                        }
+                        _state.update { it.copy(status = status) }
+                        ClipFiles.prepare(app) { p -> _state.update { it.copy(progress = p) } }
                     }
                     _state.update { it.copy(progress = 0f, status = "Preparing categories…") }
                     ClipClassifier(app, store, labels, s.minConfidence).use { clip -> assign(1) { clip.classify(it) } }

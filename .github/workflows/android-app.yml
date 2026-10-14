@@ -38,6 +38,9 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Bundle the CLIP models into the APK
+        run: sh tools/fetch_clip_models.sh
+
       - name: Unit tests and APK
         run: |
           chmod +x gradlew

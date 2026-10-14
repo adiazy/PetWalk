@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.FloatBuffer
@@ -18,49 +19,69 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-/** The CLIP model files, downloaded once into the app's private storage. */
+/**
+ * The CLIP model files. Release builds ship them inside the APK (assets/clip/); they're unpacked
+ * into private storage once, because ONNX Runtime loads models from files. Builds without the
+ * bundled files download them from Hugging Face instead.
+ */
 object ClipFiles {
     // OpenAI CLIP ViT-B/32, exported to ONNX and int8-quantized (MIT license).
     private const val BASE = "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/"
+    private const val ASSET_DIR = "clip"
     const val VISION = "vision_model_quantized.onnx"
     const val TEXT = "text_model_quantized.onnx"
     private val FILES = listOf(VISION, TEXT)
 
     fun dir(context: Context) = File(context.filesDir, "clip")
 
-    fun isDownloaded(context: Context) = FILES.all { File(dir(context), it).exists() }
+    fun isReady(context: Context) = FILES.all { File(dir(context), it).exists() }
 
-    /** Downloads the missing files, reporting overall progress from 0 to 1. */
-    fun download(context: Context, onProgress: (Float) -> Unit) {
+    fun isBundled(context: Context) =
+        context.assets.list(ASSET_DIR).orEmpty().toSet().containsAll(FILES)
+
+    /** Unpacks (or, if not bundled, downloads) the missing files, reporting progress from 0 to 1. */
+    fun prepare(context: Context, onProgress: (Float) -> Unit) {
         val dir = dir(context).apply { mkdirs() }
+        val bundled = isBundled(context)
         FILES.forEachIndexed { index, name ->
             val target = File(dir, name)
             if (target.exists()) return@forEachIndexed
             val part = File(dir, "$name.part")
-            val connection = URL(BASE + name).openConnection() as HttpURLConnection
-            connection.connectTimeout = 30_000
-            connection.readTimeout = 60_000
-            try {
-                if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-                    throw IOException("Model download failed (HTTP ${connection.responseCode}).")
+            if (bundled) {
+                context.assets.openFd("$ASSET_DIR/$name").use { fd ->
+                    fd.createInputStream().use { copy(it, part, fd.length, index, onProgress) }
                 }
-                val total = connection.contentLengthLong
-                connection.inputStream.use { input ->
-                    part.outputStream().use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        var done = 0L
-                        while (true) {
-                            val n = input.read(buffer)
-                            if (n < 0) break
-                            output.write(buffer, 0, n)
-                            done += n
-                            if (total > 0) onProgress((index + done.toFloat() / total) / FILES.size)
-                        }
-                    }
-                }
-                if (!part.renameTo(target)) throw IOException("Couldn't save the model.")
-            } finally {
-                connection.disconnect()
+            } else {
+                download(BASE + name, part, index, onProgress)
+            }
+            if (!part.renameTo(target)) throw IOException("Couldn't save the recognition model.")
+        }
+    }
+
+    private fun download(url: String, part: File, index: Int, onProgress: (Float) -> Unit) {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.connectTimeout = 30_000
+        connection.readTimeout = 60_000
+        try {
+            if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+                throw IOException("Model download failed (HTTP ${connection.responseCode}).")
+            }
+            connection.inputStream.use { copy(it, part, connection.contentLengthLong, index, onProgress) }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun copy(input: InputStream, part: File, total: Long, index: Int, onProgress: (Float) -> Unit) {
+        part.outputStream().use { output ->
+            val buffer = ByteArray(256 * 1024)
+            var done = 0L
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                output.write(buffer, 0, n)
+                done += n
+                if (total > 0) onProgress((index + done.toFloat() / total) / FILES.size)
             }
         }
     }

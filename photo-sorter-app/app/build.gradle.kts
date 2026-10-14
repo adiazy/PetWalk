@@ -29,6 +29,10 @@ android {
         compose = true
         buildConfig = true
     }
+    androidResources {
+        // The bundled CLIP models are already compact; storing them uncompressed makes unpacking fast.
+        noCompress += "onnx"
+    }
     packaging {
         resources {
             // Duplicate license/metadata files from the Claude SDK's dependencies.

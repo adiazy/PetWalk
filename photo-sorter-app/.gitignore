@@ -4,3 +4,5 @@ local.properties
 .idea/
 *.iml
 .kotlin/
+# CLIP models are fetched at build time (tools/fetch_clip_models.sh), not committed.
+app/src/main/assets/clip/

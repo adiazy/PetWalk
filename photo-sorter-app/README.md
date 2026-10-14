@@ -31,8 +31,8 @@ To install a newer build, uninstall the old one first.
      `Pets, People, Food, Nature, Documents, Screenshots` or `my dog, receipts, beach`.
      Each photo goes to the category that fits best. Choose the recognition engine:
      - **On this phone** (default): OpenAI's CLIP model runs on the phone with
-       ONNX Runtime. Nothing is uploaded and it's free. The first run
-       downloads the model once (about 150 MB). Photos below the
+       ONNX Runtime. Nothing is uploaded, it's free and works offline: the
+       model ships inside the APK. Photos below the
        *Minimum confidence* go to *Other*.
      - **Claude (cloud)**: the most accurate option. A reduced copy of each
        photo (768 px) goes to Anthropic's API with your categories. You need
@@ -56,7 +56,8 @@ The `Sorted` folder is skipped the next time you sort the same folder.
 
 ```bash
 cd photo-sorter-app
-./gradlew assembleDebug    # needs JDK 17 and the Android SDK (ANDROID_HOME)
+sh tools/fetch_clip_models.sh   # optional: bundle the CLIP models (~154 MB) into the APK
+./gradlew assembleDebug         # needs JDK 17 and the Android SDK (ANDROID_HOME)
 # -> app/build/outputs/apk/debug/app-debug.apk
 ```
 

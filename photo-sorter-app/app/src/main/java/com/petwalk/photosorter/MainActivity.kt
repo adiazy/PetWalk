@@ -220,8 +220,8 @@ private fun Controls(state: UiState, viewModel: SorterViewModel) {
                             enabled = !state.busy,
                         )
                         Text(
-                            "Photos below this confidence go to \"${Folders.OTHER}\". Recognition runs on your phone; " +
-                                "the first time, it downloads a recognition model (about 150 MB, Wi-Fi recommended).",
+                            "Photos below this confidence go to \"${Folders.OTHER}\". Recognition runs entirely " +
+                                "on your phone, offline; the first run takes a moment to unpack the model.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
