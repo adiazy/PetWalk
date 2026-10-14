@@ -12,8 +12,10 @@ android {
         applicationId = "com.petwalk.photosorter"
         minSdk = 29 // Android 10: MediaStore RELATIVE_PATH and unredacted EXIF location
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // CI passes its run number so every published APK shows a distinct version.
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = build
+        versionName = "1.$build"
     }
 
     compileOptions {
@@ -25,6 +27,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {

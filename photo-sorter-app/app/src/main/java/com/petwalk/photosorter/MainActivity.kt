@@ -105,7 +105,12 @@ fun SorterScreen(viewModel: SorterViewModel) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item { Text("Photo Sorter", style = MaterialTheme.typography.headlineMedium) }
+            item {
+                Column {
+                    Text("Photo Sorter", style = MaterialTheme.typography.headlineMedium)
+                    Text("Version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
 
             item { FolderCard(state.folder != null, state.folderName, enabled = !state.busy, onPick = pickFolder) }
 
