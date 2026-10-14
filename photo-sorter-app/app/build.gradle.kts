@@ -26,6 +26,19 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        resources {
+            // Duplicate license/metadata files from the Claude SDK's dependencies.
+            excludes += setOf(
+                "META-INF/DEPENDENCIES",
+                "META-INF/INDEX.LIST",
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*",
+                "META-INF/*.SF",
+                "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -36,7 +49,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
-    // On-device image labeling; the model ships inside the APK, no network needed.
-    implementation("com.google.mlkit:image-labeling:17.0.9")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
+    // On-device CLIP image recognition (model files are downloaded on first use).
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    // Claude API, for the optional cloud recognition.
+    implementation("com.anthropic:anthropic-java:2.34.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

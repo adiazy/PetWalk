@@ -3,6 +3,8 @@
 
     <!-- No storage permissions: the user grants access to one folder through the
          system folder picker (Storage Access Framework), and nothing else. -->
+    <!-- Place names, the one-time recognition model download, and the optional Claude API. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"

@@ -11,7 +11,19 @@ permissions:
   contents: write # to publish the APK as a release
 
 jobs:
+  verify-clip-models:
+    # The app downloads these at runtime, so check they still exist and behave as expected.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install onnxruntime==1.20.1 numpy pillow
+      - run: python photo-sorter-app/tools/verify_clip_models.py /tmp/clip
+
   build:
+    needs: verify-clip-models
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -26,10 +38,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build APK
+      - name: Unit tests and APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew testDebugUnitTest assembleDebug --stacktrace
           cp app/build/outputs/apk/debug/app-debug.apk PhotoSorter.apk
 
       - uses: actions/upload-artifact@v4

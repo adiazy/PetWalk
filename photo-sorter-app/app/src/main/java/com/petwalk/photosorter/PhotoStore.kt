@@ -7,8 +7,10 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import androidx.exifinterface.media.ExifInterface
+import java.io.ByteArrayOutputStream
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /** An image inside the chosen folder. [parent] is the folder it currently sits in. */
 data class Photo(val uri: Uri, val parent: Uri, val name: String, val mimeType: String)
@@ -99,6 +101,31 @@ class PhotoStore(private val resolver: ContentResolver) {
         }
     } catch (e: Exception) {
         null
+    }
+
+    /** A JPEG copy whose long side is at most [maxSide] px, for sending to a cloud model. */
+    fun jpeg(uri: Uri, maxSide: Int): ByteArray? {
+        val decoded = try {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
+                val longest = max(info.size.width, info.size.height)
+                decoder.setTargetSampleSize(max(1, longest / maxSide))
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            }
+        } catch (e: Exception) {
+            return null
+        }
+        val scale = maxSide.toFloat() / max(decoded.width, decoded.height)
+        val bitmap = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                decoded,
+                (decoded.width * scale).roundToInt().coerceAtLeast(1),
+                (decoded.height * scale).roundToInt().coerceAtLeast(1),
+                true,
+            )
+        } else {
+            decoded
+        }
+        return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }.toByteArray()
     }
 
     /** Call before a copy or move so folders are looked up fresh. */

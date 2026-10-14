@@ -12,9 +12,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
 
 enum class Mode(val label: String) { LOCATION("By location"), CONTENT("By content") }
+
+enum class Engine(val label: String) { ON_DEVICE("On this phone"), CLAUDE("Claude (cloud)") }
 
 data class Group(val name: String, val photos: List<Photo>)
 
@@ -23,8 +30,11 @@ data class UiState(
     val folderName: String? = null,
     val mode: Mode = Mode.LOCATION,
     val granularity: Granularity = Granularity.CITY,
-    val minConfidence: Float = 0.6f,
-    val focusLabels: String = "",
+    val engine: Engine = Engine.ON_DEVICE,
+    val categories: String = DEFAULT_CATEGORIES,
+    val minConfidence: Float = 0.3f,
+    val apiKey: String = "",
+    val claudeModel: ClaudeModel = ClaudeModel.OPUS,
     val limit: String = "", // empty = all photos
     val skipSorted: Boolean = true,
     val oldestFirst: Boolean = true,
@@ -33,6 +43,8 @@ data class UiState(
     val status: String? = null,
     val groups: List<Group> = emptyList(),
 )
+
+const val DEFAULT_CATEGORIES = "Pets, People, Food, Nature, City, Documents, Screenshots"
 
 class SorterViewModel(app: Application) : AndroidViewModel(app) {
     val store = PhotoStore(app.contentResolver)
@@ -43,6 +55,14 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
+        _state.update {
+            it.copy(
+                engine = enumOrDefault(prefs.getString(KEY_ENGINE, null), Engine.ON_DEVICE),
+                categories = prefs.getString(KEY_CATEGORIES, null) ?: DEFAULT_CATEGORIES,
+                apiKey = prefs.getString(KEY_API_KEY, null) ?: "",
+                claudeModel = enumOrDefault(prefs.getString(KEY_MODEL, null), ClaudeModel.OPUS),
+            )
+        }
         // Reopen the last folder, as long as Android still lets us access it.
         val saved = prefs.getString(KEY_FOLDER, null)?.let(Uri::parse)
         if (saved != null && resolver.persistedUriPermissions.any { it.uri == saved }) {
@@ -81,7 +101,22 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
     fun setMode(mode: Mode) = reset { it.copy(mode = mode) }
     fun setGranularity(granularity: Granularity) = reset { it.copy(granularity = granularity) }
     fun setMinConfidence(value: Float) = reset { it.copy(minConfidence = value) }
-    fun setFocusLabels(value: String) = reset { it.copy(focusLabels = value) }
+    fun setEngine(value: Engine) {
+        prefs.edit().putString(KEY_ENGINE, value.name).apply()
+        reset { it.copy(engine = value) }
+    }
+    fun setCategories(value: String) {
+        prefs.edit().putString(KEY_CATEGORIES, value).apply()
+        reset { it.copy(categories = value) }
+    }
+    fun setApiKey(value: String) {
+        prefs.edit().putString(KEY_API_KEY, value.trim()).apply()
+        reset { it.copy(apiKey = value.trim()) }
+    }
+    fun setClaudeModel(value: ClaudeModel) {
+        prefs.edit().putString(KEY_MODEL, value.name).apply()
+        reset { it.copy(claudeModel = value) }
+    }
     fun setLimit(value: String) = reset { it.copy(limit = value.filter(Char::isDigit).take(6)) }
     fun setSkipSorted(value: Boolean) = reset { it.copy(skipSorted = value) }
     fun setOldestFirst(value: Boolean) = reset { it.copy(oldestFirst = value) }
@@ -94,47 +129,29 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
         val s = _state.value
         val folder = s.folder ?: return
         if (s.busy) return
+        val labels = s.categories.split(",", "\n").map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (s.mode == Mode.CONTENT) {
+            val problem = when {
+                labels.isEmpty() -> "Add at least one category."
+                s.engine == Engine.CLAUDE && s.apiKey.isBlank() -> "Enter your Claude API key first."
+                else -> null
+            }
+            if (problem != null) {
+                _state.update { it.copy(status = problem) }
+                return
+            }
+        }
         viewModelScope.launch {
             _state.update { it.copy(busy = true, progress = 0f, groups = emptyList(), status = "Reading folder…") }
             var summary = ""
-            val groups = withContext(Dispatchers.IO) {
-                var candidates = store.photos(folder).let { if (s.oldestFirst) it else it.asReversed() }
-                val inFolder = candidates.size
-                if (s.skipSorted) {
-                    val done = store.sortedNames(folder)
-                    candidates = candidates.filter { it.name !in done }
-                }
-                val limit = s.limit.toIntOrNull()?.takeIf { it > 0 }
-                val photos = if (limit != null) candidates.take(limit) else candidates
-                summary = buildString {
-                    append("Reviewed ${photos.size} of $inFolder photos in the folder")
-                    if (limit != null) append(if (s.oldestFirst) " (oldest first)" else " (newest first)")
-                    val skipped = inFolder - candidates.size
-                    if (skipped > 0) append(", skipping $skipped already sorted")
-                    val left = candidates.size - photos.size
-                    if (left > 0) append(". $left still to go")
-                    append(".")
-                }
-                val byFolder = LinkedHashMap<String, MutableList<Photo>>()
-                suspend fun assign(group: suspend (Photo) -> String) {
-                    photos.forEachIndexed { i, photo ->
-                        byFolder.getOrPut(group(photo)) { mutableListOf() }.add(photo)
-                        _state.update {
-                            it.copy(progress = (i + 1f) / photos.size, status = "Looking at photo ${i + 1} of ${photos.size}…")
-                        }
-                    }
-                }
-                when (s.mode) {
-                    Mode.LOCATION -> {
-                        val grouper = LocationGrouper(getApplication())
-                        assign { grouper.group(store.location(it), s.granularity) }
-                    }
-                    Mode.CONTENT -> ContentGrouper(store, s.minConfidence, s.focusLabels.split(",")).use { grouper ->
-                        assign { grouper.group(it) }
-                    }
-                }
-                byFolder.map { (name, list) -> Group(name, list) }
-                    .sortedWith(compareBy<Group> { it.name in Folders.special }.thenByDescending { it.photos.size })
+            val groups = try {
+                withContext(Dispatchers.IO) { group(s, folder, labels) { summary = it } }
+            } catch (e: ClaudeAccountException) {
+                _state.update { it.copy(busy = false, status = e.message) }
+                return@launch
+            } catch (e: IOException) {
+                _state.update { it.copy(busy = false, status = "Couldn't download the recognition model: ${e.message} Check your internet connection and try again.") }
+                return@launch
             }
             val total = groups.sumOf { it.photos.size }
             _state.update {
@@ -149,6 +166,66 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
+    }
+
+    private suspend fun group(s: UiState, folder: Uri, labels: List<String>, onSummary: (String) -> Unit): List<Group> {
+        var candidates = store.photos(folder).let { if (s.oldestFirst) it else it.asReversed() }
+        val inFolder = candidates.size
+        if (s.skipSorted) {
+            val done = store.sortedNames(folder)
+            candidates = candidates.filter { it.name !in done }
+        }
+        val limit = s.limit.toIntOrNull()?.takeIf { it > 0 }
+        val photos = if (limit != null) candidates.take(limit) else candidates
+        val summary = buildString {
+            append("Reviewed ${photos.size} of $inFolder photos in the folder")
+            if (limit != null) append(if (s.oldestFirst) " (oldest first)" else " (newest first)")
+            val skipped = inFolder - candidates.size
+            if (skipped > 0) append(", skipping $skipped already sorted")
+            val left = candidates.size - photos.size
+            if (left > 0) append(". $left still to go")
+            append(".")
+        }
+        onSummary(summary)
+        val results = arrayOfNulls<String>(photos.size)
+        // Runs [classify] on every photo, [parallelism] at a time, updating progress as it goes.
+        suspend fun assign(parallelism: Int, classify: (Photo) -> String) = coroutineScope {
+            val gate = Semaphore(parallelism)
+            val done = AtomicInteger()
+            photos.forEachIndexed { i, photo ->
+                launch {
+                    gate.withPermit { results[i] = classify(photo) }
+                    val n = done.incrementAndGet()
+                    _state.update {
+                        it.copy(progress = n.toFloat() / photos.size, status = "Looking at photo $n of ${photos.size}…")
+                    }
+                }
+            }
+        }
+        when (s.mode) {
+            Mode.LOCATION -> {
+                val grouper = LocationGrouper(getApplication())
+                assign(1) { grouper.group(store.location(it), s.granularity) }
+            }
+            Mode.CONTENT -> when (s.engine) {
+                Engine.ON_DEVICE -> {
+                    val app = getApplication<Application>()
+                    if (!ClipFiles.isDownloaded(app)) {
+                        _state.update { it.copy(status = "Downloading the recognition model (one time, about 150 MB)…") }
+                        ClipFiles.download(app) { p -> _state.update { it.copy(progress = p) } }
+                    }
+                    _state.update { it.copy(progress = 0f, status = "Preparing categories…") }
+                    ClipClassifier(app, store, labels, s.minConfidence).use { clip -> assign(1) { clip.classify(it) } }
+                }
+                Engine.CLAUDE -> ClaudeClassifier(s.apiKey, s.claudeModel, store, labels).use { claude ->
+                    assign(CLAUDE_PARALLELISM) { claude.classify(it) }
+                }
+            }
+        }
+        val byFolder = LinkedHashMap<String, MutableList<Photo>>()
+        photos.forEachIndexed { i, photo -> byFolder.getOrPut(results[i] ?: Folders.NOT_CLASSIFIED) { mutableListOf() }.add(photo) }
+        return byFolder.map { (name, list) -> Group(name, list) }
+            .sortedWith(compareBy<Group> { it.name in Folders.special }.thenByDescending { it.photos.size })
     }
 
     fun copyAll() = transfer("Copied") { folder, photo, group -> store.copy(folder, photo, group) }
@@ -187,5 +264,13 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val KEY_FOLDER = "folder"
+        const val KEY_ENGINE = "engine"
+        const val KEY_CATEGORIES = "categories"
+        const val KEY_API_KEY = "claude_api_key"
+        const val KEY_MODEL = "claude_model"
+        const val CLAUDE_PARALLELISM = 4
+
+        inline fun <reified T : Enum<T>> enumOrDefault(name: String?, default: T): T =
+            enumValues<T>().firstOrNull { it.name == name } ?: default
     }
 }

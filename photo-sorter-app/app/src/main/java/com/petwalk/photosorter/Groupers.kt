@@ -3,11 +3,6 @@ package com.petwalk.photosorter
 import android.content.Context
 import android.location.Address
 import android.location.Geocoder
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.label.ImageLabeling
-import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
-import kotlinx.coroutines.tasks.await
-import java.io.Closeable
 import java.util.Locale
 
 object Folders {
@@ -15,8 +10,9 @@ object Folders {
     const val UNCATEGORIZED = "Uncategorized"
     const val OTHER = "Other"
     const val UNREADABLE = "Unreadable"
+    const val NOT_CLASSIFIED = "Not classified"
 
-    val special = setOf(UNKNOWN_LOCATION, UNCATEGORIZED, OTHER, UNREADABLE)
+    val special = setOf(UNKNOWN_LOCATION, UNCATEGORIZED, OTHER, UNREADABLE, NOT_CLASSIFIED)
 
     /** Makes a "Country/Region/City" style path safe to use as folder names. */
     fun sanitize(path: String): String = path.split("/")
@@ -54,34 +50,4 @@ class LocationGrouper(context: Context) {
     } catch (e: Exception) {
         null
     }
-}
-
-/** Labels photos with ML Kit's on-device model (~400 labels: Dog, Cat, Beach, Food, ...). */
-class ContentGrouper(
-    private val store: PhotoStore,
-    private val minConfidence: Float,
-    focusLabels: List<String>,
-) : Closeable {
-    private val focus = focusLabels.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
-    private val labeler = ImageLabeling.getClient(
-        ImageLabelerOptions.Builder().setConfidenceThreshold(0.1f).build()
-    )
-
-    suspend fun group(photo: Photo): String {
-        val bitmap = store.thumbnail(photo.uri, 512) ?: return Folders.UNREADABLE
-        val labels = try {
-            labeler.process(InputImage.fromBitmap(bitmap, 0)).await()
-        } catch (e: Exception) {
-            return Folders.UNREADABLE
-        }
-        val candidates = if (focus.isEmpty()) labels else labels.filter { it.text.lowercase() in focus }
-        val best = candidates.maxByOrNull { it.confidence }
-        return when {
-            best != null && best.confidence >= minConfidence -> Folders.sanitize(best.text)
-            focus.isEmpty() -> Folders.UNCATEGORIZED
-            else -> Folders.OTHER
-        }
-    }
-
-    override fun close() = labeler.close()
 }

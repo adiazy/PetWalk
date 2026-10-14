@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
@@ -183,26 +184,72 @@ private fun Controls(state: UiState, viewModel: SorterViewModel) {
                 }
             }
             Mode.CONTENT -> {
-                Text(
-                    "Minimum confidence: ${(state.minConfidence * 100).roundToInt()}%",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Slider(
-                    value = state.minConfidence,
-                    onValueChange = viewModel::setMinConfidence,
-                    valueRange = 0.3f..0.95f,
-                    enabled = !state.busy,
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Engine.entries.forEach { engine ->
+                        FilterChip(
+                            selected = state.engine == engine,
+                            onClick = { viewModel.setEngine(engine) },
+                            label = { Text(engine.label) },
+                            enabled = !state.busy,
+                        )
+                    }
+                }
                 OutlinedTextField(
-                    value = state.focusLabels,
-                    onValueChange = viewModel::setFocusLabels,
-                    label = { Text("Only these labels (optional)") },
-                    placeholder = { Text("Dog, Cat, Beach, Food") },
-                    supportingText = { Text("Comma-separated. Leave empty to use each photo's best label.") },
-                    singleLine = true,
+                    value = state.categories,
+                    onValueChange = viewModel::setCategories,
+                    label = { Text("Categories") },
+                    supportingText = { Text("Comma-separated, in your own words, e.g. \"my dog, receipts, beach\".") },
                     enabled = !state.busy,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                when (state.engine) {
+                    Engine.ON_DEVICE -> {
+                        Text(
+                            "Minimum confidence: ${(state.minConfidence * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Slider(
+                            value = state.minConfidence,
+                            onValueChange = viewModel::setMinConfidence,
+                            valueRange = 0.1f..0.9f,
+                            enabled = !state.busy,
+                        )
+                        Text(
+                            "Photos below this confidence go to \"${Folders.OTHER}\". Recognition runs on your phone; " +
+                                "the first time, it downloads a recognition model (about 150 MB, Wi-Fi recommended).",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Engine.CLAUDE -> {
+                        OutlinedTextField(
+                            value = state.apiKey,
+                            onValueChange = viewModel::setApiKey,
+                            label = { Text("Claude API key") },
+                            placeholder = { Text("sk-ant-…") },
+                            supportingText = { Text("Create one at console.anthropic.com. It's stored only on this phone.") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            enabled = !state.busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ClaudeModel.entries.forEach { model ->
+                                FilterChip(
+                                    selected = state.claudeModel == model,
+                                    onClick = { viewModel.setClaudeModel(model) },
+                                    label = { Text(model.label) },
+                                    enabled = !state.busy,
+                                )
+                            }
+                        }
+                        Text(state.claudeModel.note, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "A reduced copy of each photo (768 px) is sent to Anthropic's API, and the cost is " +
+                                "billed to your API key. Costs are rough estimates.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
             }
         }
 
