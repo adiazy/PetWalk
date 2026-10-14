@@ -30,7 +30,7 @@ assert any(o.name.endswith("embeds") for o in vision.get_outputs())
 assert any(o.name.endswith("embeds") for o in text.get_outputs())
 
 # Same tokenizer data the app bundles (simple whitespace-separated words only, enough for this check).
-bpe = Path(__file__).parents[1] / "app/src/main/assets/clip_bpe_simple_vocab_16e6.txt.gz"
+bpe = Path(__file__).parents[1] / "app/src/main/assets/clip_bpe_merges.gzip"
 merges = gzip.open(bpe, "rt", encoding="utf-8").read().split("\n")[1:49152 - 256 - 2 + 1]
 merges = [tuple(m.split()) for m in merges]
 bs = list(range(ord("!"), ord("~") + 1)) + list(range(ord("¡"), ord("¬") + 1)) + list(range(ord("®"), ord("ÿ") + 1))

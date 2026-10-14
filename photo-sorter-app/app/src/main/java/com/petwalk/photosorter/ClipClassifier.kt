@@ -167,7 +167,8 @@ class ClipClassifier(
 
     private companion object {
         const val SIZE = 224
-        const val BPE_ASSET = "clip_bpe_simple_vocab_16e6.txt.gz"
+        // Not named *.gz: the Android build silently gunzips .gz assets and drops the extension.
+        const val BPE_ASSET = "clip_bpe_merges.gzip"
         val MEAN = floatArrayOf(0.48145466f, 0.4578275f, 0.40821073f)
         val STD = floatArrayOf(0.26862954f, 0.26130258f, 0.27577711f)
 

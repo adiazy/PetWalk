@@ -5,7 +5,7 @@ import org.junit.Test
 import java.io.File
 
 class ClipTokenizerTest {
-    private val tokenizer = File("src/main/assets/clip_bpe_simple_vocab_16e6.txt.gz").inputStream().use { ClipTokenizer(it) }
+    private val tokenizer = File("src/main/assets/clip_bpe_merges.gzip").inputStream().use { ClipTokenizer(it) }
 
     // Expected ids come from OpenAI's reference tokenizer (open_clip SimpleTokenizer).
     private fun check(text: String, vararg expected: Long) = assertArrayEquals(text, expected, tokenizer.encode(text))
