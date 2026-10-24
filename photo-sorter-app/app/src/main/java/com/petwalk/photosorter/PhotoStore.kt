@@ -103,8 +103,8 @@ class PhotoStore(private val resolver: ContentResolver) {
         null
     }
 
-    /** A JPEG copy whose long side is at most [maxSide] px, for sending to a cloud model. */
-    fun jpeg(uri: Uri, maxSide: Int): ByteArray? {
+    /** A software bitmap whose long side is at most [maxSide] px, correctly rotated. */
+    fun bitmap(uri: Uri, maxSide: Int): Bitmap? {
         val decoded = try {
             ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
                 val longest = max(info.size.width, info.size.height)
@@ -115,16 +115,18 @@ class PhotoStore(private val resolver: ContentResolver) {
             return null
         }
         val scale = maxSide.toFloat() / max(decoded.width, decoded.height)
-        val bitmap = if (scale < 1f) {
-            Bitmap.createScaledBitmap(
-                decoded,
-                (decoded.width * scale).roundToInt().coerceAtLeast(1),
-                (decoded.height * scale).roundToInt().coerceAtLeast(1),
-                true,
-            )
-        } else {
-            decoded
-        }
+        if (scale >= 1f) return decoded
+        return Bitmap.createScaledBitmap(
+            decoded,
+            (decoded.width * scale).roundToInt().coerceAtLeast(1),
+            (decoded.height * scale).roundToInt().coerceAtLeast(1),
+            true,
+        )
+    }
+
+    /** A JPEG copy whose long side is at most [maxSide] px, for sending to a cloud model. */
+    fun jpeg(uri: Uri, maxSide: Int): ByteArray? {
+        val bitmap = bitmap(uri, maxSide) ?: return null
         return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }.toByteArray()
     }
 

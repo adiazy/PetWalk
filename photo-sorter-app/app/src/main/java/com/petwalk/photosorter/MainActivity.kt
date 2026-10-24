@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.Image
@@ -40,6 +41,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -99,6 +101,14 @@ fun SorterScreen(viewModel: SorterViewModel) {
     }
     val pickFolder = { folderPicker.launch(state.folder ?: DCIM_HINT) }
 
+    // The system photo picker: only the photos chosen here are shared with the app.
+    val familyPhotoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
+        viewModel.addFamilyMember(uris)
+    }
+    val pickFamilyPhotos = {
+        familyPhotoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
+
     Scaffold { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -115,7 +125,7 @@ fun SorterScreen(viewModel: SorterViewModel) {
             item { FolderCard(state.folder != null, state.folderName, enabled = !state.busy, onPick = pickFolder) }
 
             if (state.folder != null) {
-                item { Controls(state = state, viewModel = viewModel) }
+                item { Controls(state = state, viewModel = viewModel, onAddFamilyPhotos = pickFamilyPhotos) }
             }
 
             if (state.busy) {
@@ -161,7 +171,7 @@ private fun FolderCard(hasFolder: Boolean, folderName: String?, enabled: Boolean
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Controls(state: UiState, viewModel: SorterViewModel) {
+private fun Controls(state: UiState, viewModel: SorterViewModel, onAddFamilyPhotos: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Sort", style = MaterialTheme.typography.labelLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -188,6 +198,7 @@ private fun Controls(state: UiState, viewModel: SorterViewModel) {
                     }
                 }
             }
+            Mode.FAMILY -> Unit
             Mode.CONTENT -> {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Engine.entries.forEach { engine ->
@@ -258,6 +269,10 @@ private fun Controls(state: UiState, viewModel: SorterViewModel) {
             }
         }
 
+        if (state.mode == Mode.FAMILY) {
+            FamilyControls(state, viewModel, onAddFamilyPhotos)
+        }
+
         OutlinedTextField(
             value = state.limit,
             onValueChange = viewModel::setLimit,
@@ -297,6 +312,73 @@ private fun Controls(state: UiState, viewModel: SorterViewModel) {
 }
 
 @Composable
+private fun FamilyControls(state: UiState, viewModel: SorterViewModel, onAddPhotos: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Family members", style = MaterialTheme.typography.labelLarge)
+        if (state.family.isEmpty()) {
+            Text(
+                "Add each person with 3–5 clear photos of their face, ideally photos where they're the only " +
+                    "(or the biggest) face. Only face fingerprints are saved, on this phone.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        state.family.forEach { member ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${member.name} · learned from ${member.photos} photo${if (member.photos == 1) "" else "s"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { viewModel.removeFamilyMember(member.name) }, enabled = !state.busy) {
+                    Text("Remove")
+                }
+            }
+        }
+        OutlinedTextField(
+            value = state.newMemberName,
+            onValueChange = viewModel::setNewMemberName,
+            label = { Text("Add a person: name") },
+            placeholder = { Text("e.g. Maria") },
+            supportingText = { Text("Use an existing name to add more photos of that person.") },
+            singleLine = true,
+            enabled = !state.busy,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedButton(
+            onClick = onAddPhotos,
+            enabled = !state.busy && state.newMemberName.isNotBlank(),
+        ) { Text("Choose photos of ${state.newMemberName.trim().ifEmpty { "this person" }}") }
+
+        Text(
+            "Match strictness: ${(state.familyThreshold * 100).roundToInt()}%",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Slider(
+            value = state.familyThreshold,
+            onValueChange = viewModel::setFamilyThreshold,
+            valueRange = 0.25f..0.6f,
+            enabled = !state.busy,
+        )
+        Text(
+            "Higher means fewer wrong matches but more missed photos. Photos without family members " +
+                "are left where they are.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = state.familyPerPerson,
+                onCheckedChange = viewModel::setFamilyPerPerson,
+                enabled = !state.busy,
+            )
+            Text(
+                "One album per person (photos with several go to ${Folders.FAMILY}/${Folders.TOGETHER})",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+@Composable
 private fun Actions(folderName: String?, onCopy: () -> Unit, onMove: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -317,7 +399,8 @@ private fun GroupCard(group: Group, store: PhotoStore) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(group.name, style = MaterialTheme.typography.titleMedium)
             Text(
-                "${group.photos.size} photo${if (group.photos.size == 1) "" else "s"}",
+                "${group.photos.size} photo${if (group.photos.size == 1) "" else "s"}" +
+                    if (group.skipped) " · won't be copied or moved" else "",
                 style = MaterialTheme.typography.bodySmall,
             )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

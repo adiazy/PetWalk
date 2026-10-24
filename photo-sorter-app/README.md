@@ -40,6 +40,16 @@ To install a newer build, uninstall the old one first.
        Rough cost per 1,000 photos: Opus 5.5 about $6 (default, most accurate),
        Sonnet 5.5 about $3, Haiku 5.5 about $0.15. Photos the API can't handle
        go to *Not classified*.
+   - **Family**: finds photos of your family members, entirely on the phone.
+     Add each person once: type their name, tap **Choose photos** and pick
+     3–5 clear photos of their face (photos where they're the only or the
+     biggest face work best). The app keeps only face fingerprints, not the
+     photos. When sorting, photos with a family member go to `Family`
+     (or `Family/<name>` with **One album per person**, and `Family/Together`
+     when several are in the photo). Other photos are left where they are.
+     Raise **Match strictness** if strangers get matched; lower it if family
+     photos are missed. Faces are found with Google's ML Kit and recognized
+     with OpenCV's SFace model.
 3. Optionally set **Photos to review** (e.g. `200`) to work in batches,
    starting from the **oldest** photos (or switch to **Newest first**). Leave it empty to review the whole folder. With
    **Skip photos already sorted** on (the default), photos already in the
@@ -56,7 +66,7 @@ The `Sorted` folder is skipped the next time you sort the same folder.
 
 ```bash
 cd photo-sorter-app
-sh tools/fetch_clip_models.sh   # optional: bundle the CLIP models (~154 MB) into the APK
+sh tools/fetch_models.sh        # bundle the recognition models (~190 MB) into the APK
 ./gradlew assembleDebug         # needs JDK 17 and the Android SDK (ANDROID_HOME)
 # -> app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -71,6 +81,7 @@ thing and publishes the APK as the `photo-sorter-latest` release.
 | `PhotoStore.kt` | Lists photos and reads EXIF GPS in the picked folder (Storage Access Framework); copies and moves files |
 | `Groupers.kt` | `LocationGrouper` (Geocoder) and folder-name helpers |
 | `ClipClassifier.kt`, `ClipTokenizer.kt` | On-device CLIP: model download, tokenizer, image/text encoders |
+| `FaceAlign.kt`, `FaceEngine.kt`, `Family.kt` | Family mode: face detection, alignment, SFace fingerprints, saved family members |
 | `ClaudeClassifier.kt` | Cloud classification with the Claude API (Anthropic Java SDK) |
 | `SorterViewModel.kt` | Runs the preview, copy and move steps in the background |
 | `MainActivity.kt` | The Compose UI and permission requests |

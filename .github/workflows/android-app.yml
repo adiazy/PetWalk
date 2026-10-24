@@ -11,19 +11,25 @@ permissions:
   contents: write # to publish the APK as a release
 
 jobs:
-  verify-clip-models:
-    # The app downloads these at runtime, so check they still exist and behave as expected.
+  verify-models:
+    # Check the recognition models still download and behave the way the app expects.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install onnxruntime==1.20.1 numpy pillow
+      - run: pip install onnxruntime==1.20.1 numpy pillow opencv-python-headless scikit-image
       - run: python photo-sorter-app/tools/verify_clip_models.py /tmp/clip
+      - name: Verify the face model against OpenCV's reference pipeline
+        run: |
+          M=https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models
+          curl -fsSL -o /tmp/sface.onnx $M/face_recognition_sface/face_recognition_sface_2021dec.onnx
+          curl -fsSL -o /tmp/yunet.onnx $M/face_detection_yunet/face_detection_yunet_2023mar.onnx
+          python photo-sorter-app/tools/verify_face_model.py /tmp/sface.onnx /tmp/yunet.onnx
 
   build:
-    needs: verify-clip-models
+    needs: verify-models
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -38,8 +44,8 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Bundle the CLIP models into the APK
-        run: sh tools/fetch_clip_models.sh
+      - name: Bundle the recognition models into the APK
+        run: sh tools/fetch_models.sh
 
       - name: Unit tests and APK
         run: |
@@ -50,7 +56,8 @@ jobs:
       - name: Check the APK contains the recognition files
         run: |
           unzip -l PhotoSorter.apk 'assets/*'
-          for f in assets/clip_bpe_merges.gzip assets/clip/vision_model_quantized.onnx assets/clip/text_model_quantized.onnx; do
+          for f in assets/clip_bpe_merges.gzip assets/clip/vision_model_quantized.onnx assets/clip/text_model_quantized.onnx \
+                   assets/face/face_recognition_sface_2021dec.onnx; do
             unzip -l PhotoSorter.apk "$f" > /dev/null || { echo "missing $f"; exit 1; }
           done
           # The models must be stored uncompressed so the app can unpack them with openFd().

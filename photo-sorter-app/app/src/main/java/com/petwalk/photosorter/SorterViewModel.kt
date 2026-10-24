@@ -19,11 +19,17 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 
-enum class Mode(val label: String) { LOCATION("By location"), CONTENT("By content") }
+enum class Mode(val label: String) { LOCATION("By location"), CONTENT("By content"), FAMILY("Family") }
 
 enum class Engine(val label: String) { ON_DEVICE("On this phone"), CLAUDE("Claude (cloud)") }
 
-data class Group(val name: String, val photos: List<Photo>)
+data class Group(val name: String, val photos: List<Photo>) {
+    /** Shown in the preview, but never copied or moved (e.g. "Not family"). */
+    val skipped get() = name in Folders.skipped
+}
+
+/** What the screen shows about a family member. */
+data class FamilySummary(val name: String, val photos: Int)
 
 data class UiState(
     val folder: Uri? = null,
@@ -35,6 +41,10 @@ data class UiState(
     val minConfidence: Float = 0.3f,
     val apiKey: String = "",
     val claudeModel: ClaudeModel = ClaudeModel.OPUS,
+    val family: List<FamilySummary> = emptyList(),
+    val newMemberName: String = "",
+    val familyThreshold: Float = 0.40f,
+    val familyPerPerson: Boolean = false,
     val limit: String = "", // empty = all photos
     val skipSorted: Boolean = true,
     val oldestFirst: Boolean = true,
@@ -51,6 +61,8 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
 
     private val resolver = app.contentResolver
     private val prefs = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    private val familyStore = FamilyStore(app)
+    private var familyMembers: List<FamilyMember> = emptyList()
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
@@ -61,7 +73,13 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
                 categories = prefs.getString(KEY_CATEGORIES, null) ?: DEFAULT_CATEGORIES,
                 apiKey = prefs.getString(KEY_API_KEY, null) ?: "",
                 claudeModel = enumOrDefault(prefs.getString(KEY_MODEL, null), ClaudeModel.OPUS),
+                familyThreshold = prefs.getFloat(KEY_FAMILY_THRESHOLD, 0.40f),
+                familyPerPerson = prefs.getBoolean(KEY_FAMILY_PER_PERSON, false),
             )
+        }
+        viewModelScope.launch {
+            familyMembers = withContext(Dispatchers.IO) { familyStore.load() }
+            publishFamily()
         }
         // Reopen the last folder, as long as Android still lets us access it.
         val saved = prefs.getString(KEY_FOLDER, null)?.let(Uri::parse)
@@ -113,6 +131,65 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putString(KEY_API_KEY, value.trim()).apply()
         reset { it.copy(apiKey = value.trim()) }
     }
+    fun setNewMemberName(value: String) = _state.update { it.copy(newMemberName = value) }
+    fun setFamilyThreshold(value: Float) {
+        prefs.edit().putFloat(KEY_FAMILY_THRESHOLD, value).apply()
+        reset { it.copy(familyThreshold = value) }
+    }
+    fun setFamilyPerPerson(value: Boolean) {
+        prefs.edit().putBoolean(KEY_FAMILY_PER_PERSON, value).apply()
+        reset { it.copy(familyPerPerson = value) }
+    }
+
+    /** Learns the face of the person named in the name field from the photos they picked. */
+    fun addFamilyMember(photos: List<Uri>) {
+        val name = _state.value.newMemberName.trim()
+        if (photos.isEmpty() || name.isEmpty() || _state.value.busy) return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, progress = 0f, status = "Learning $name's face…") }
+            val faces = try {
+                withContext(Dispatchers.IO) {
+                    FaceEngine(getApplication()).use { engine ->
+                        photos.mapIndexedNotNull { i, uri ->
+                            val face = store.bitmap(uri, FamilyClassifier.DETECT_SIDE)?.let { engine.faces(it).firstOrNull() }
+                            _state.update { it.copy(progress = (i + 1f) / photos.size) }
+                            face
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                _state.update { it.copy(busy = false, status = "The face recognition model isn't included in this build.") }
+                return@launch
+            }
+            if (faces.isEmpty()) {
+                _state.update {
+                    it.copy(busy = false, status = "No clear face found in those photos. Pick close-ups where $name's face is clearly visible.")
+                }
+                return@launch
+            }
+            val existing = familyMembers.firstOrNull { it.name.equals(name, ignoreCase = true) }
+            val updated = FamilyMember(existing?.name ?: name, existing?.faces.orEmpty() + faces)
+            familyMembers = familyMembers.filter { it !== existing } + updated
+            withContext(Dispatchers.IO) { familyStore.save(familyMembers) }
+            publishFamily()
+            val missed = photos.size - faces.size
+            val missedNote = if (missed > 0) " ($missed had no clear face and were skipped)" else ""
+            reset { it.copy(busy = false, newMemberName = "") }
+            _state.update { it.copy(status = "Learned ${updated.name}'s face from ${faces.size} photos$missedNote.") }
+        }
+    }
+
+    fun removeFamilyMember(name: String) {
+        familyMembers = familyMembers.filter { it.name != name }
+        val snapshot = familyMembers
+        viewModelScope.launch(Dispatchers.IO) { familyStore.save(snapshot) }
+        publishFamily()
+        reset { it }
+    }
+
+    private fun publishFamily() =
+        _state.update { s -> s.copy(family = familyMembers.map { FamilySummary(it.name, it.faces.size) }) }
+
     fun setClaudeModel(value: ClaudeModel) {
         prefs.edit().putString(KEY_MODEL, value.name).apply()
         reset { it.copy(claudeModel = value) }
@@ -130,6 +207,10 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
         val folder = s.folder ?: return
         if (s.busy) return
         val labels = s.categories.split(",", "\n").map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (s.mode == Mode.FAMILY && familyMembers.isEmpty()) {
+            _state.update { it.copy(status = "Add at least one family member first.") }
+            return
+        }
         if (s.mode == Mode.CONTENT) {
             val problem = when {
                 labels.isEmpty() -> "Add at least one category."
@@ -158,10 +239,10 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     busy = false,
                     groups = groups,
-                    status = if (total == 0) {
-                        "$summary Nothing to sort."
-                    } else {
-                        "$summary ${groups.size} albums. Nothing has been changed yet."
+                    status = when {
+                        total == 0 -> "$summary Nothing to sort."
+                        groups.all { g -> g.skipped } -> "$summary No family members found in these photos."
+                        else -> "$summary ${groups.count { g -> !g.skipped }} albums. Nothing has been changed yet."
                     },
                 )
             }
@@ -226,6 +307,12 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
                     assign(CLAUDE_PARALLELISM) { claude.classify(it) }
                 }
             }
+            Mode.FAMILY -> {
+                _state.update { it.copy(status = "Loading face recognition…") }
+                FamilyClassifier(getApplication(), store, familyMembers, s.familyThreshold, s.familyPerPerson).use { family ->
+                    assign(1) { family.classify(it) }
+                }
+            }
         }
         val byFolder = LinkedHashMap<String, MutableList<Photo>>()
         photos.forEachIndexed { i, photo -> byFolder.getOrPut(results[i] ?: Folders.NOT_CLASSIFIED) { mutableListOf() }.add(photo) }
@@ -240,15 +327,16 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
     private fun transfer(verb: String, action: (Uri, Photo, String) -> Boolean) {
         val s = _state.value
         val folder = s.folder ?: return
-        if (s.groups.isEmpty() || s.busy) return
+        val groups = s.groups.filterNot { it.skipped }
+        if (groups.isEmpty() || s.busy) return
         viewModelScope.launch {
             _state.update { it.copy(busy = true, progress = 0f) }
-            val total = s.groups.sumOf { it.photos.size }
+            val total = groups.sumOf { it.photos.size }
             var done = 0
             var failed = 0
             withContext(Dispatchers.IO) {
                 store.resetFolders()
-                for (group in s.groups) {
+                for (group in groups) {
                     for (photo in group.photos) {
                         if (!action(folder, photo, group.name)) failed++
                         done++
@@ -273,6 +361,8 @@ class SorterViewModel(app: Application) : AndroidViewModel(app) {
         const val KEY_CATEGORIES = "categories"
         const val KEY_API_KEY = "claude_api_key"
         const val KEY_MODEL = "claude_model"
+        const val KEY_FAMILY_THRESHOLD = "family_threshold"
+        const val KEY_FAMILY_PER_PERSON = "family_per_person"
         const val CLAUDE_PARALLELISM = 4
 
         inline fun <reified T : Enum<T>> enumOrDefault(name: String?, default: T): T =

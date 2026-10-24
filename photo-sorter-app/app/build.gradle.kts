@@ -58,6 +58,8 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     // On-device CLIP image recognition (model files are downloaded on first use).
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    // Face detection with landmarks (model bundled in the APK), for Family mode.
+    implementation("com.google.mlkit:face-detection:16.1.7")
     // Claude API, for the optional cloud recognition.
     implementation("com.anthropic:anthropic-java:2.34.0")
 

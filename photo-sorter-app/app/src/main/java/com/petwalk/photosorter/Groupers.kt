@@ -11,8 +11,14 @@ object Folders {
     const val OTHER = "Other"
     const val UNREADABLE = "Unreadable"
     const val NOT_CLASSIFIED = "Not classified"
+    const val FAMILY = "Family"
+    const val TOGETHER = "Together"
+    const val NOT_FAMILY = "Not family"
 
-    val special = setOf(UNKNOWN_LOCATION, UNCATEGORIZED, OTHER, UNREADABLE, NOT_CLASSIFIED)
+    val special = setOf(UNKNOWN_LOCATION, UNCATEGORIZED, OTHER, UNREADABLE, NOT_CLASSIFIED, NOT_FAMILY)
+
+    /** Groups shown in the preview but never copied or moved. */
+    val skipped = setOf(NOT_FAMILY)
 
     /** Makes a "Country/Region/City" style path safe to use as folder names. */
     fun sanitize(path: String): String = path.split("/")
