@@ -50,6 +50,8 @@ class LrcLibClient(
     private val baseUrl: String = "https://lrclib.net",
     private val userAgent: String = "KaraokeTV/0.1 (https://github.com/adiazy/PetWalk)",
     private val http: HttpGet = UrlConnectionHttpGet(),
+    /** Waits between retries; replaceable in tests. */
+    private val sleep: (Long) -> Unit = Thread::sleep,
 ) : LyricsProvider {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -90,6 +92,7 @@ class LrcLibClient(
             listOf("q" to title)
         }
         val (code, body) = request("/api/search", params)
+        if (code in BUSY_CODES) throw IOException("LRCLIB's server is busy right now (HTTP $code). Try again in a minute.")
         if (code != 200) throw IOException("LRCLIB answered HTTP $code")
         return json.decodeFromString<List<LrcLibTrack>>(body)
     }
@@ -109,9 +112,21 @@ class LrcLibClient(
         return abs(track.duration - durationMs / 1000.0)
     }
 
+    /**
+     * LRCLIB is a free, volunteer-run service and sometimes answers "busy" (503 and friends).
+     * Those are temporary, so wait a little and try again before giving up.
+     */
     private fun request(path: String, params: List<Pair<String, String>>): Pair<Int, String> {
         val qs = params.joinToString("&") { (k, v) -> "$k=${encode(v)}" }
-        return http.get("$baseUrl$path?$qs", mapOf("User-Agent" to userAgent, "Accept" to "application/json"))
+        val url = "$baseUrl$path?$qs"
+        val headers = mapOf("User-Agent" to userAgent, "Accept" to "application/json")
+        var response = http.get(url, headers)
+        for (delayMs in RETRY_DELAYS_MS) {
+            if (response.first !in BUSY_CODES) break
+            sleep(delayMs)
+            response = http.get(url, headers)
+        }
+        return response
     }
 
     private fun encode(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
@@ -119,5 +134,7 @@ class LrcLibClient(
     companion object {
         const val SOURCE = "LRCLIB"
         private const val MAX_DURATION_GAP_S = 8.0
+        private val BUSY_CODES = setOf(429, 502, 503, 504)
+        private val RETRY_DELAYS_MS = listOf(1_000L, 2_500L, 5_000L)
     }
 }

@@ -62,11 +62,30 @@ class LyricsSourcesTest {
 
     @Test
     fun repositoryReportsProviderErrors() {
-        val client = LrcLibClient(http = { _, _ -> 503 to "busy" })
+        val client = LrcLibClient(http = { _, _ -> 503 to "busy" }, sleep = {})
         val report = LyricsRepository(listOf(client)).search(LyricsQuery("Song", "Band"))
         assertNull(report.lyrics)
-        assertEquals(listOf("LrcLibClient: LRCLIB answered HTTP 503"), report.problems)
+        assertEquals(
+            listOf("Online lyrics: LRCLIB's server is busy right now (HTTP 503). Try again in a minute."),
+            report.problems,
+        )
         assertEquals("Song", report.query.title)
+    }
+
+    @Test
+    fun lrcLibRetriesWhenBusy() {
+        var calls = 0
+        val waits = mutableListOf<Long>()
+        val client = LrcLibClient(
+            http = { _, _ ->
+                calls++
+                if (calls < 3) 503 to "busy" else 200 to """[{"id":1,"syncedLyrics":"[00:01.00]ok"}]"""
+            },
+            sleep = { waits += it },
+        )
+        assertEquals("ok", client.find(LyricsQuery("Song"))?.lines?.single()?.text)
+        assertEquals(3, calls)
+        assertEquals(listOf(1_000L, 2_500L), waits)
     }
 
     @Test

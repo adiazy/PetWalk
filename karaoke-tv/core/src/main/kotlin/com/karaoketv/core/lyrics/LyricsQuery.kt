@@ -68,5 +68,9 @@ class LyricsRepository(private val providers: List<LyricsProvider>) : LyricsProv
         return LyricsSearchReport(q, plain, problems)
     }
 
-    private val LyricsProvider.name get() = this::class.simpleName?.removeSuffix("Provider") ?: "Lyrics source"
+    private val LyricsProvider.name
+        get() = when (this) {
+            is LrcLibClient -> "Online lyrics"
+            else -> this::class.simpleName?.removeSuffix("Provider") ?: "Lyrics source"
+        }
 }
