@@ -47,8 +47,16 @@ Write-Host "4/4 Opening Karaoke TV ($package) ..." -ForegroundColor Cyan
 
 # TVs with profiles (Google TV) install into the active profile, e.g. user 10, while plain
 # adb shell commands default to user 0, so always target the current profile.
-$user = ((adb -s $device shell am get-current-user 2>&1) -join "").Trim()
-if ($user -notmatch '^\d+$') { $user = "0" }
+# Read it from the TV's package info ("User 10: ... installed=true"); some TVs (e.g. Android 11)
+# don't support "am get-current-user".
+$user = $null
+$installedFor = adb -s $device shell dumpsys package $package 2>&1 |
+    Select-String 'User (\d+):.*installed=true' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+if ($installedFor) {
+    $current = ((adb -s $device shell am get-current-user 2>&1) -join "").Trim()
+    $user = if ($installedFor -contains $current) { $current } else { @($installedFor)[0] }
+}
+if (-not $user) { $user = "current" }
 
 # Ask the TV which screen its launcher opens for this app, then start that one.
 $activity = $null
