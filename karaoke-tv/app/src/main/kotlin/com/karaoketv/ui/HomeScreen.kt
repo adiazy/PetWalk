@@ -211,7 +211,7 @@ private fun OnlinePane(vm: KaraokeViewModel) {
         )
         Spacer(Modifier.height(16.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TvTextField(query, { query = it }, "Song or artist", Modifier.weight(1f)) { vm.searchOnline(query) }
+            TvTextField(query, { query = it }, "Song or artist", Modifier.weight(1f), onSubmit = { vm.searchOnline(query) })
             Spacer(Modifier.width(12.dp))
             Button(onClick = { vm.searchOnline(query) }) { Text(if (vm.searching) "Searching…" else "Search") }
         }

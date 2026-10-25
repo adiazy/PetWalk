@@ -3,7 +3,7 @@ package com.karaoketv.core.lyrics
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import java.net.URLEncoder
 import kotlin.math.abs
 
@@ -27,7 +27,7 @@ fun interface HttpGet {
 
 class UrlConnectionHttpGet(private val timeoutMs: Int = 10_000) : HttpGet {
     override fun get(url: String, headers: Map<String, String>): Pair<Int, String> {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = URI(url).toURL().openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = timeoutMs
             conn.readTimeout = timeoutMs
