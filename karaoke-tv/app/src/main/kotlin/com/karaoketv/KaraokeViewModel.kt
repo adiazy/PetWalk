@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import android.util.Log
 import androidx.annotation.OptIn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -404,6 +405,15 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         return saved
     }
 
+    // My music list position, kept here so it survives a trip to the karaoke screen and back.
+    /** Artist whose songs are open in My music, or null. */
+    var openArtist by mutableStateOf<String?>(null)
+    /** Key of the My music row that last had focus ("artist:Name" or a song id). */
+    var focusedLibraryRow: String? = null
+    val libraryListState = LazyListState()
+    /** Set when leaving the karaoke screen, so My music puts focus back on the song just sung. */
+    var restoreLibraryFocus = false
+
     var lyricsDownload by mutableStateOf<String?>(null)
         private set
     private var lyricsDownloadJob: Job? = null
@@ -477,6 +487,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stop() {
+        restoreLibraryFocus = true
         lyricsJob?.cancel()
         player.stop()
         clock.pause()

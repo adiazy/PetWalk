@@ -22,13 +22,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +37,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -64,6 +67,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.karaoketv.KaraokeViewModel
+import kotlinx.coroutines.launch
 import com.karaoketv.media.NetworkFolder
 import com.karaoketv.media.Song
 
@@ -171,13 +175,46 @@ private fun LibraryPane(vm: KaraokeViewModel) {
 @Composable
 private fun ArtistList(vm: KaraokeViewModel) {
     val groups = remember(vm.library) { groupByArtist(vm.library) }
-    var expanded by rememberSaveable { mutableStateOf<String?>(null) }
-    val listState = rememberLazyListState()
+    val expanded = vm.openArtist
+    val listState = vm.libraryListState
+    val scope = rememberCoroutineScope()
+    val requesters = remember { HashMap<String, FocusRequester>() }
+    fun requester(key: String) = requesters.getOrPut(key) { FocusRequester() }
 
-    BackHandler(enabled = expanded != null) { expanded = null }
-    LaunchedEffect(expanded) {
-        val index = groups.indexOfFirst { it.first == expanded }
-        if (index >= 0) listState.animateScrollToItem(index)
+    // Row keys in display order, to find where a row is in the list.
+    fun keys(open: String?) = buildList {
+        for ((artist, songs) in groups) {
+            add(artistKey(artist))
+            if (artist == open) songs.forEach { add(it.id) }
+        }
+    }
+
+    /** Scrolls [key] into view if needed, then gives it focus. */
+    fun focusRow(key: String, open: String?) {
+        scope.launch {
+            val index = keys(open).indexOf(key)
+            if (index < 0) return@launch
+            val visible = listState.layoutInfo.visibleItemsInfo.any { it.index == index }
+            if (!visible) listState.scrollToItem(index)
+            withFrameNanos { } // let the row be laid out before focusing it
+            runCatching { requester(key).requestFocus() }
+        }
+    }
+
+    // Coming back from a song: focus the row used last (only then, so moving through the
+    // left-hand menu isn't pulled into the list).
+    LaunchedEffect(Unit) {
+        if (!vm.restoreLibraryFocus) return@LaunchedEffect
+        vm.restoreLibraryFocus = false
+        vm.focusedLibraryRow?.let { focusRow(it, expanded) }
+    }
+
+    // Back closes the open artist and puts focus on its row instead of the top of the list.
+    BackHandler(enabled = expanded != null) {
+        val artist = expanded ?: return@BackHandler
+        vm.openArtist = null
+        vm.focusedLibraryRow = artistKey(artist)
+        focusRow(artistKey(artist), null)
     }
 
     LazyColumn(
@@ -187,8 +224,18 @@ private fun ArtistList(vm: KaraokeViewModel) {
     ) {
         for ((artist, songs) in groups) {
             val open = artist == expanded
-            item(key = "artist:$artist") {
-                CompactRow(onClick = { expanded = if (open) null else artist }) {
+            val key = artistKey(artist)
+            item(key = key) {
+                CompactRow(
+                    onClick = {
+                        vm.openArtist = if (open) null else artist
+                        // Opening: bring the artist to the top so its songs are in view.
+                        if (!open) scope.launch { listState.animateScrollToItem(keys(artist).indexOf(key)) }
+                    },
+                    modifier = Modifier
+                        .focusRequester(requester(key))
+                        .onFocusChanged { if (it.isFocused) vm.focusedLibraryRow = key },
+                ) {
                     Text(
                         (if (open) "▾  " else "▸  ") + artist,
                         style = MaterialTheme.typography.titleMedium,
@@ -206,7 +253,13 @@ private fun ArtistList(vm: KaraokeViewModel) {
             }
             if (open) {
                 items(songs, key = { it.id }) { song ->
-                    CompactRow(onClick = { vm.play(song) }, indent = 28.dp) {
+                    CompactRow(
+                        onClick = { vm.play(song) },
+                        indent = 28.dp,
+                        modifier = Modifier
+                            .focusRequester(requester(song.id))
+                            .onFocusChanged { if (it.isFocused) vm.focusedLibraryRow = song.id },
+                    ) {
                         Text(
                             song.title,
                             style = MaterialTheme.typography.bodyLarge,
@@ -227,16 +280,19 @@ private fun ArtistList(vm: KaraokeViewModel) {
     }
 }
 
+private fun artistKey(artist: String) = "artist:$artist"
+
 /** A slim, focusable list row (about 40dp tall) for the TV remote. */
 @Composable
 private fun CompactRow(
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     indent: Dp = 0.dp,
     content: @Composable RowScope.() -> Unit,
 ) {
     Surface(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().padding(start = indent),
+        modifier = Modifier.padding(start = indent).fillMaxWidth().then(modifier),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.White.copy(alpha = 0.04f),
