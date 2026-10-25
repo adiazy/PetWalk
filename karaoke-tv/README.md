@@ -38,9 +38,13 @@ username and password (`DOMAIN\user` works too). You can also hide music stored 
   (`Artist\Album\song.mp3` or `Artist\song.mp3`). Tags inside the file correct them once it plays.
 - Album art fills the karaoke screen behind the lyrics: the cover embedded in the file, or
   `cover.jpg` / `folder.jpg` / `front.jpg` in the song's folder. Turn it off in **Look & feel**.
-- Lyrics: an existing `Song.lrc` next to `Song.mp3` on the share is used first (songs with one show
-  "♪ lyrics"). Otherwise the lyrics are searched online (LRCLIB) when the song plays. Online lyrics are
-  only kept in memory: the app never downloads or saves `.lrc` files, on the share or on the TV.
+- Lyrics folder: `\\192.168.1.99\Public\Shared Music\.lrc` (change it under **Change folder**; it must
+  be on the same share). When a song plays, the app looks for `Artist - Title.lrc` (or a file named
+  like the audio file, e.g. `01 Song.lrc`) there first, then `Song.lrc` next to the song, then online.
+- Synced lyrics found online are downloaded into that folder as `Artist - Title.lrc`, so next time
+  they load instantly and offline. **Download lyrics for all songs** fills the folder in one go;
+  lyrics picked with **Wrong lyrics?** replace the saved file. Nothing is written next to your songs.
+  Songs with a lyrics file show "♪". Saving needs write access to the share.
 - Needs SMB 2 or newer, which is the default on Windows 10/11 and current NAS firmware.
   The login is saved on the TV in plain app storage.
 

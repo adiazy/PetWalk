@@ -94,3 +94,30 @@ object LrcParser {
         return min * 60_000 + sec * 1_000 + fracMs
     }
 }
+
+object LrcWriter {
+    fun write(lyrics: Lyrics): String = buildString {
+        lyrics.title?.let { appendLine("[ti:$it]") }
+        lyrics.artist?.let { appendLine("[ar:$it]") }
+        for (line in lyrics.lines) {
+            if (!lyrics.synced) {
+                appendLine(line.text)
+                continue
+            }
+            append('[').append(stamp(line.startMs)).append(']')
+            if (line.words.isEmpty()) {
+                append(line.text)
+            } else {
+                line.words.forEach { append('<').append(stamp(it.startMs)).append('>').append(it.text) }
+            }
+            appendLine()
+        }
+    }
+
+    private fun stamp(ms: Long): String {
+        val min = ms / 60_000
+        val sec = (ms / 1_000) % 60
+        val cs = (ms % 1_000) / 10
+        return "%02d:%02d.%02d".format(min, sec, cs)
+    }
+}

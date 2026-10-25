@@ -66,13 +66,17 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
     private var smb: SmbConnection? = connect(networkFolder)
 
+    @Volatile
+    private var lyricsDir: String? = lyricsDirFor(networkFolder)
+
     private val lrcLib = LrcLibClient()
 
-    // Lyrics files are only ever read; online results are kept in memory and never saved.
+    // Synced lyrics found online are downloaded into the shared lyrics folder (see saveLyrics).
+    private val shareLyrics = SmbSidecarLrcProvider({ smb }, { lyricsDir })
     private val lyricsRepository = LyricsRepository(
         listOf(
             SidecarLrcProvider(),
-            SmbSidecarLrcProvider { smb },
+            shareLyrics,
             lrcLib,
             // Backup when LRCLIB is busy or has nothing (plain text only).
             LyricsOvhClient(),
@@ -177,7 +181,16 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         val connection = smb
         viewModelScope.launch {
             val (songs, error) = withContext(Dispatchers.IO) {
-                val network = connection?.let { runCatching { it.scan() } }
+                val dir = lyricsDir
+                val network = connection?.let { smbConnection ->
+                    runCatching {
+                        val lrcFiles = dir?.let { runCatching { smbConnection.listNames(it) }.getOrNull() }.orEmpty()
+                        smbConnection.scan().map { song ->
+                            if (song.hasLyricsFile || !shareLyrics.hasFile(song.toQuery().cleaned(), lrcFiles)) song
+                            else song.copy(hasLyricsFile = true)
+                        }
+                    }
+                }
                 val device = if (folder.includeDeviceMusic) {
                     runCatching { LocalLibrary.query(getApplication()) }.getOrDefault(emptyList())
                 } else {
@@ -203,8 +216,17 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         folderStore.save(folder)
         val old = smb
         smb = connect(folder)
+        lyricsDir = lyricsDirFor(folder)
         viewModelScope.launch(Dispatchers.IO) { runCatching { old?.close() } }
         loadLibrary()
+    }
+
+    /** Share-relative lyrics folder path, if it's on the same server and share as the music. */
+    private fun lyricsDirFor(folder: NetworkFolder): String? {
+        val music = SmbLocation.parse(folder.path) ?: return null
+        val lyrics = SmbLocation.parse(folder.lyricsFolder) ?: return null
+        val sameShare = lyrics.host.equals(music.host, ignoreCase = true) && lyrics.share.equals(music.share, ignoreCase = true)
+        return lyrics.path.takeIf { sameShare && it.isNotEmpty() }
     }
 
     private fun connect(folder: NetworkFolder): SmbConnection? =
@@ -275,7 +297,9 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         }
         lyrics = LyricsState.Loading
         lyricsJob = viewModelScope.launch {
-            val report = withContext(Dispatchers.IO) { lyricsRepository.search(song.toQuery()) }
+            val report = withContext(Dispatchers.IO) {
+                lyricsRepository.search(song.toQuery()).also { r -> r.lyrics?.let { saveLyrics(song, it) } }
+            }
             val searched = listOfNotNull(report.query.title, report.query.artist?.let { "by $it" }).joinToString(" ")
             Log.i(TAG, "Lyrics for \"$searched\": ${report.lyrics?.source ?: "not found"} ${report.problems}")
             lyrics = report.lyrics?.let { LyricsState.Found(it) } ?: LyricsState.NotFound(searched, report.problems)
@@ -321,7 +345,66 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     /** Shows the chosen result for the current song (kept in memory only). */
     fun useLyrics(track: LrcLibTrack) {
         lyricsJob?.cancel()
-        lrcLib.toLyrics(track)?.let { lyrics = LyricsState.Found(it) }
+        val chosen = lrcLib.toLyrics(track) ?: return
+        lyrics = LyricsState.Found(chosen)
+        // The singer picked these by hand, so they replace whatever file was there.
+        val song = nowPlaying ?: return
+        viewModelScope.launch(Dispatchers.IO) { saveLyrics(song, chosen, overwrite = true) }
+    }
+
+    /**
+     * Downloads synced lyrics into the shared lyrics folder as `Artist - Title.lrc`, unless they
+     * came from a file on the share already. Blocking; call on IO. Returns true if a file was written.
+     */
+    private fun saveLyrics(song: Song, found: com.karaoketv.core.lyrics.Lyrics, overwrite: Boolean = false): Boolean {
+        if (!found.synced) return false
+        if (!overwrite && SmbSidecarLrcProvider.isFromShare(found)) return false
+        val saved = shareLyrics.save(song.toQuery().cleaned(), found)
+        if (saved) {
+            Log.i(TAG, "Saved lyrics for ${song.title} to $lyricsDir")
+            viewModelScope.launch {
+                library = library.map { if (it.id == song.id) it.copy(hasLyricsFile = true) else it }
+            }
+        }
+        return saved
+    }
+
+    var lyricsDownload by mutableStateOf<String?>(null)
+        private set
+    private var lyricsDownloadJob: Job? = null
+    val downloadingLyrics get() = lyricsDownloadJob?.isActive == true
+
+    /** Downloads lyrics for every song that doesn't have a lyrics file yet; call again to stop. */
+    fun downloadAllLyrics() {
+        if (downloadingLyrics) {
+            lyricsDownloadJob?.cancel()
+            lyricsDownload = "Stopped."
+            return
+        }
+        if (lyricsDir == null) {
+            lyricsDownload = "Set a lyrics folder on the same share as the music (Change folder)."
+            return
+        }
+        val todo = library.filter { !it.hasLyricsFile }
+        if (todo.isEmpty()) {
+            lyricsDownload = "Every song already has a lyrics file."
+            return
+        }
+        lyricsDownloadJob = viewModelScope.launch {
+            var saved = 0
+            var notFound = 0
+            for ((i, song) in todo.withIndex()) {
+                lyricsDownload = "Downloading lyrics ${i + 1}/${todo.size}: ${song.title}  (saved $saved)"
+                val ok = withContext(Dispatchers.IO) {
+                    val found = runCatching { lyricsRepository.find(song.toQuery()) }.getOrNull()
+                    if (found == null || !found.synced) notFound++
+                    found != null && saveLyrics(song, found)
+                }
+                if (ok) saved++
+            }
+            lyricsDownload = "Done: saved $saved lyrics files" +
+                (if (notFound > 0) "; no synced lyrics found for $notFound songs" else "") + "."
+        }
     }
 
     private companion object {

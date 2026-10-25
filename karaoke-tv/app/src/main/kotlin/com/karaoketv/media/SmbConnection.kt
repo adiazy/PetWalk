@@ -78,6 +78,34 @@ class SmbConnection(
         null,
     )
 
+    fun writeText(path: String, text: String) {
+        share().openFile(
+            path,
+            EnumSet.of(AccessMask.GENERIC_WRITE),
+            null,
+            SMB2ShareAccess.ALL,
+            SMB2CreateDisposition.FILE_OVERWRITE_IF,
+            null,
+        ).use { file -> file.outputStream.use { it.write(text.toByteArray(Charsets.UTF_8)) } }
+    }
+
+    /** Creates [path] and any missing parent folders. */
+    fun ensureFolder(path: String) {
+        val disk = share()
+        var current = ""
+        for (part in path.split('\\').filter { it.isNotEmpty() }) {
+            current = if (current.isEmpty()) part else "$current\\$part"
+            if (!disk.folderExists(current)) disk.mkdir(current)
+        }
+    }
+
+    /** Lower-cased names of the files in [dir], or empty if it doesn't exist. */
+    fun listNames(dir: String): Set<String> {
+        val disk = share()
+        if (!disk.folderExists(dir)) return emptySet()
+        return disk.list(dir).mapTo(HashSet()) { it.fileName.lowercase() }
+    }
+
     /** Reads a small file (e.g. cover.jpg), or null if it's missing or larger than [maxBytes]. */
     fun readBytes(path: String, maxBytes: Long = 8L * 1024 * 1024): ByteArray? {
         if (!share().fileExists(path)) return null

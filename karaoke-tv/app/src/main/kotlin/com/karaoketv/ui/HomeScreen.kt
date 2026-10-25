@@ -139,7 +139,11 @@ private fun LibraryPane(vm: KaraokeViewModel) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { editing = !editing }) { Text(if (editing) "Cancel" else "Change folder") }
             Button(onClick = vm::loadLibrary) { Text("Refresh") }
+            Button(onClick = vm::downloadAllLyrics) {
+                Text(if (vm.lyricsDownload?.startsWith("Downloading") == true) "Stop" else "Download lyrics for all songs")
+            }
         }
+        vm.lyricsDownload?.let { Text(it, color = Gold, style = MaterialTheme.typography.bodyMedium) }
         Spacer(Modifier.height(12.dp))
         if (editing) {
             FolderEditor(vm) { editing = false }
@@ -271,6 +275,7 @@ private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
     var user by remember { mutableStateOf(current.username) }
     var password by remember { mutableStateOf(current.password) }
     var includeDevice by remember { mutableStateOf(current.includeDeviceMusic) }
+    var lyricsFolder by remember { mutableStateOf(current.lyricsFolder) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Network folder (Windows share or NAS)", style = MaterialTheme.typography.titleMedium)
         TvTextField(path, { path = it }, """\\192.168.1.99\Public\Shared Music""", Modifier.fillMaxWidth())
@@ -279,15 +284,20 @@ private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
             style = MaterialTheme.typography.bodySmall,
             color = Color.White.copy(alpha = 0.6f),
         )
+        Text("Lyrics folder (downloads are saved here; must be on the same share)", style = MaterialTheme.typography.titleMedium)
+        TvTextField(lyricsFolder, { lyricsFolder = it }, NetworkFolder.DEFAULT_LYRICS_PATH, Modifier.fillMaxWidth())
         TvTextField(user, { user = it }, "Username (optional)", Modifier.fillMaxWidth())
         TvTextField(password, { password = it }, "Password (optional)", Modifier.fillMaxWidth(), password = true)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { includeDevice = !includeDevice }) {
                 Text(if (includeDevice) "✓ Also show music on this TV" else "Also show music on this TV")
             }
-            Button(onClick = { path = NetworkFolder.DEFAULT_PATH }) { Text("Use default") }
             Button(onClick = {
-                vm.updateNetworkFolder(NetworkFolder(path.trim(), user.trim(), password, includeDevice))
+                path = NetworkFolder.DEFAULT_PATH
+                lyricsFolder = NetworkFolder.DEFAULT_LYRICS_PATH
+            }) { Text("Use default") }
+            Button(onClick = {
+                vm.updateNetworkFolder(NetworkFolder(path.trim(), user.trim(), password, includeDevice, lyricsFolder.trim()))
                 onDone()
             }) { Text("Save & scan") }
         }
