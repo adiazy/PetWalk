@@ -65,10 +65,4 @@ class LrcParserTest {
         assertEquals(0.5f, lyrics.progressAt(0, 1_000), 0.01f)
         assertEquals(1f, lyrics.progressAt(0, 2_500), 0.01f)
     }
-
-    @Test
-    fun writerRoundTrips() {
-        val original = LrcParser.parse("[ti:T]\n[00:01.00]<00:01.00>Hello <00:01.50>world\n[01:02.30]Bye")
-        assertEquals(original, LrcParser.parse(LrcWriter.write(original)))
-    }
 }

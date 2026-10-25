@@ -73,23 +73,13 @@ class LyricsSourcesTest {
     }
 
     @Test
-    fun sidecarAndCache() {
+    fun sidecar() {
         val dir = Files.createTempDirectory("karaoke").toFile()
         val audio = dir.resolve("track.mp3").apply { writeText("") }
         dir.resolve("track.lrc").writeText("[00:02.00]Sidecar")
         val sidecar = assertNotNull(SidecarLrcProvider().find(LyricsQuery("t", localPath = audio.path)))
         assertEquals("Sidecar", sidecar.lines.single().text)
         assertNull(SidecarLrcProvider().find(LyricsQuery("t", localPath = dir.resolve("other.mp3").path)))
-
-        var calls = 0
-        val plain = Lyrics(listOf(LyricLine(0, "line one"), LyricLine(0, "line two")), synced = false, "LRCLIB")
-        val cache = CachedLyricsProvider(dir.resolve("cache")) { calls++; plain }
-        val q = LyricsQuery("t", "a")
-        assertEquals(plain.lines, cache.find(q)?.lines)
-        val cached = assertNotNull(cache.find(q))
-        assertEquals(1, calls)
-        assertEquals("LRCLIB", cached.source)
-        assertEquals(listOf("line one", "line two"), cached.lines.map { it.text })
         dir.deleteRecursively()
     }
 }

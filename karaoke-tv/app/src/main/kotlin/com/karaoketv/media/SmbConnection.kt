@@ -83,17 +83,6 @@ class SmbConnection(
         return openRead(path).use { it.inputStream.bufferedReader().readText() }
     }
 
-    fun writeText(path: String, text: String) {
-        share().openFile(
-            path,
-            EnumSet.of(AccessMask.GENERIC_WRITE),
-            null,
-            SMB2ShareAccess.ALL,
-            SMB2CreateDisposition.FILE_OVERWRITE_IF,
-            null,
-        ).use { file -> file.outputStream.use { it.write(text.toByteArray(Charsets.UTF_8)) } }
-    }
-
     /** Recursively lists audio files under the configured folder. */
     fun scan(): List<Song> {
         val disk = share()

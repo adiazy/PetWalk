@@ -9,7 +9,7 @@ An Android TV karaoke app: plays your music with time-synced, highlighted lyrics
 | **My music → network folder**: a Windows share or NAS, default `\\192.168.1.99\Public\Shared Music` (subfolders included) | Audio streamed straight from the share, plus `.lrc` lyrics next to each song |
 | **My music → this TV**: songs on the TV's storage and USB drives | Audio + lyrics |
 | **Sidecar `.lrc` files**: `Song.mp3` + `Song.lrc` in the same folder | Synced lyrics, offline |
-| **[LRCLIB](https://lrclib.net)**: free, open lyrics database, no API key | Synced lyrics for millions of songs, cached on the device after the first play |
+| **[LRCLIB](https://lrclib.net)**: free, open lyrics database, no API key | Synced lyrics for millions of songs, looked up when a song plays (nothing is saved) |
 | **Play from URL**: any direct MP3/AAC/FLAC/HLS link (NAS, Jellyfin/Plex direct links, radio) | Audio; lyrics looked up from the title you enter or from the stream's metadata |
 | **Find lyrics online, lyrics-only mode** | Timed lyrics on the TV while the backing track plays from a phone or speaker |
 
@@ -33,11 +33,9 @@ username and password (`DOMAIN\user` works too). You can also hide music stored 
 - Songs stream directly from the share, so seeking works and nothing is copied to the TV.
 - Titles and artists are guessed from file names like `01 - Artist - Title.mp3`, then corrected
   from the song's tags once it starts playing.
-- Lyrics: `Song.lrc` next to `Song.mp3` on the share is used first. If it's missing, the lyrics are
-  searched online (LRCLIB) and saved back to the share as `Song.lrc`, so they're there next time
-  and for other karaoke apps. **Find lyrics for all songs** does this for the whole library in one go.
-  Songs that already have a lyrics file show "♪ lyrics". Saving needs write access to the share;
-  turn it off under **Change folder** if you don't want files added.
+- Lyrics: an existing `Song.lrc` next to `Song.mp3` on the share is used first (songs with one show
+  "♪ lyrics"). Otherwise the lyrics are searched online (LRCLIB) when the song plays. Online lyrics are
+  only kept in memory: the app never downloads or saves `.lrc` files, on the share or on the TV.
 - Needs SMB 2 or newer, which is the default on Windows 10/11 and current NAS firmware.
   The login is saved on the TV in plain app storage.
 
@@ -85,5 +83,5 @@ Or open the `karaoke-tv` folder in Android Studio and run it on an **Android TV 
 
 ## Layout
 
-- `core/`: pure Kotlin/JVM: LRC parser/writer, timing math, LRCLIB client, sidecar and cache providers (unit-tested)
+- `core/`: pure Kotlin/JVM: LRC parser, timing math, LRCLIB client, sidecar provider, share-path parsing (unit-tested)
 - `app/`: Android TV app: Compose for TV UI, Media3 ExoPlayer, vocal reducer audio processor

@@ -135,11 +135,7 @@ private fun LibraryPane(vm: KaraokeViewModel) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { editing = !editing }) { Text(if (editing) "Cancel" else "Change folder") }
             Button(onClick = vm::loadLibrary) { Text("Refresh") }
-            Button(onClick = vm::findLyricsForAll) {
-                Text(if (vm.lyricsBatch?.startsWith("Finding") == true) "Stop" else "Find lyrics for all songs")
-            }
         }
-        vm.lyricsBatch?.let { Text(it, color = Gold, style = MaterialTheme.typography.bodyMedium) }
         Spacer(Modifier.height(12.dp))
         if (editing) {
             FolderEditor(vm) { editing = false }
@@ -180,7 +176,6 @@ private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
     var user by remember { mutableStateOf(current.username) }
     var password by remember { mutableStateOf(current.password) }
     var includeDevice by remember { mutableStateOf(current.includeDeviceMusic) }
-    var saveLyrics by remember { mutableStateOf(current.saveLyricsToShare) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Network folder (Windows share or NAS)", style = MaterialTheme.typography.titleMedium)
         TvTextField(path, { path = it }, """\\192.168.1.99\Public\Shared Music""", Modifier.fillMaxWidth())
@@ -195,14 +190,9 @@ private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
             Button(onClick = { includeDevice = !includeDevice }) {
                 Text(if (includeDevice) "✓ Also show music on this TV" else "Also show music on this TV")
             }
-            Button(onClick = { saveLyrics = !saveLyrics }) {
-                Text(if (saveLyrics) "✓ Save found lyrics as .lrc" else "Save found lyrics as .lrc")
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { path = NetworkFolder.DEFAULT_PATH }) { Text("Use default") }
             Button(onClick = {
-                vm.updateNetworkFolder(NetworkFolder(path.trim(), user.trim(), password, includeDevice, saveLyrics))
+                vm.updateNetworkFolder(NetworkFolder(path.trim(), user.trim(), password, includeDevice))
                 onDone()
             }) { Text("Save & scan") }
         }
