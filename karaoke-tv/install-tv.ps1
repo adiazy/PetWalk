@@ -53,8 +53,28 @@ foreach ($category in "android.intent.category.LEANBACK_LAUNCHER", "android.inte
     if ($resolved -match "/") { $activity = $resolved; break }
 }
 if (-not $activity) {
-    Write-Host "The TV has $package installed but found no screen to open." -ForegroundColor Red
-    Write-Host "Send Claude the output of:  findstr /n /i ""activity category"" app\src\main\AndroidManifest.xml" -ForegroundColor Yellow
+    Write-Host "The TV has $package installed but found no screen to open. Diagnostics:" -ForegroundColor Red
+
+    Write-Host "`n--- Manifest on this PC ---" -ForegroundColor Yellow
+    Select-String -Path (Join-Path $PSScriptRoot "app\src\main\AndroidManifest.xml") -Pattern "activity|category|<application" |
+        ForEach-Object { "{0}: {1}" -f $_.LineNumber, $_.Line.Trim() } | Out-Host
+
+    Write-Host "`n--- Local changes (git status) ---" -ForegroundColor Yellow
+    git -C $PSScriptRoot status --short | Out-Host
+
+    $aapt = Get-ChildItem (Join-Path $env:LOCALAPPDATA "Android\Sdk\build-tools") -Recurse -Filter aapt.exe -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending | Select-Object -First 1
+    if ($aapt) {
+        Write-Host "`n--- Inside the built APK ---" -ForegroundColor Yellow
+        & $aapt.FullName dump badging $apk 2>&1 | Select-String "package:|launchable|leanback|sdkVersion" | Out-Host
+    }
+
+    Write-Host "`n--- On the TV ---" -ForegroundColor Yellow
+    adb -s $device shell dumpsys package $package 2>&1 |
+        Select-String "karaoketv/|versionName|minSdk|targetSdk|User \d|installed=" | Select-Object -First 25 | Out-Host
+    adb -s $device shell getprop ro.build.version.release | ForEach-Object { "Android version: $_" } | Out-Host
+
+    Write-Host "`nCopy everything above and send it to Claude." -ForegroundColor Yellow
     exit 1
 }
 
