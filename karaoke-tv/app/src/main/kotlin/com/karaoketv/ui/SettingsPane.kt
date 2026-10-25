@@ -13,9 +13,12 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Button
@@ -25,6 +28,19 @@ import com.karaoketv.KaraokeViewModel
 
 @Composable
 fun SettingsPane(vm: KaraokeViewModel) {
+    // Draw this screen 15% smaller: scaling density shrinks all dp sizes and sp text together.
+    val density = LocalDensity.current
+    CompositionLocalProvider(
+        LocalDensity provides Density(density.density * SCALE, density.fontScale),
+    ) {
+        SettingsContent(vm)
+    }
+}
+
+private const val SCALE = 0.85f
+
+@Composable
+private fun SettingsContent(vm: KaraokeViewModel) {
     val look = vm.appearance
     LazyColumn(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item {
