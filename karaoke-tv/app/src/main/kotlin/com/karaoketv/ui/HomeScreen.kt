@@ -264,7 +264,7 @@ private fun SongCard(title: String, subtitle: String, meta: String, onClick: () 
 
 /** A text field that opens the on-screen keyboard when the remote's center button is pressed. */
 @Composable
-private fun TvTextField(
+internal fun TvTextField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,

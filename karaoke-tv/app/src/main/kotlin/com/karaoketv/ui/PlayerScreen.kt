@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -39,6 +41,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.karaoketv.KaraokeViewModel
 import com.karaoketv.LyricsState
+import com.karaoketv.media.Song
 
 @Composable
 fun PlayerScreen(vm: KaraokeViewModel) {
@@ -64,6 +67,7 @@ fun PlayerScreen(vm: KaraokeViewModel) {
         onDispose { view.keepScreenOn = false }
     }
 
+    var searchingByHand by remember(song.id) { mutableStateOf(false) }
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
 
@@ -95,11 +99,13 @@ fun PlayerScreen(vm: KaraokeViewModel) {
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             when (val state = vm.lyrics) {
                 LyricsState.Loading -> Text("Looking for lyrics…", style = MaterialTheme.typography.headlineMedium)
-                LyricsState.NotFound -> Text(
-                    "No lyrics found for this song.\nAdd a .lrc file with the same name next to it.",
-                    style = MaterialTheme.typography.headlineSmall,
-                )
-                is LyricsState.Found -> LyricsDisplay(state.lyrics, position + vm.lyricOffsetMs, duration)
+                is LyricsState.NotFound -> LyricsSearchPanel(vm, song, state)
+                is LyricsState.Found ->
+                    if (searchingByHand) {
+                        LyricsSearchPanel(vm, song, null) { searchingByHand = false }
+                    } else {
+                        LyricsDisplay(state.lyrics, position + vm.lyricOffsetMs, duration)
+                    }
             }
         }
 
@@ -115,6 +121,11 @@ fun PlayerScreen(vm: KaraokeViewModel) {
             // The offset is added to the playback position, so a positive value shows lyrics sooner.
             Button(onClick = { vm.lyricOffsetMs += 250 }) { Text("Lyrics earlier") }
             Button(onClick = { vm.lyricOffsetMs -= 250 }) { Text("Lyrics later") }
+            if (vm.lyrics is LyricsState.Found) {
+                Button(onClick = { searchingByHand = !searchingByHand }) {
+                    Text(if (searchingByHand) "Back to lyrics" else "Wrong lyrics?")
+                }
+            }
             if (song.uri != null) {
                 Button(onClick = vm::toggleVocals) { Text(if (vm.vocalsReduced) "Vocals: reduced" else "Vocals: normal") }
             }
@@ -149,3 +160,67 @@ private fun ProgressBar(position: Long, duration: Long?) {
         Text(formatTime(duration), color = Color.White.copy(alpha = 0.7f))
     }
 }
+
+/**
+ * Shown when no lyrics were found (with what was searched and why), or on request when the match
+ * is wrong. Lets the singer search LRCLIB by hand and pick the right song.
+ */
+@Composable
+private fun LyricsSearchPanel(
+    vm: KaraokeViewModel,
+    song: Song,
+    notFound: LyricsState.NotFound?,
+    onPicked: () -> Unit = {},
+) {
+    var text by remember(song.id) {
+        mutableStateOf(listOfNotNull(song.artist, song.title).joinToString(" "))
+    }
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 96.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (notFound != null) {
+            Text("No lyrics found", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+            if (notFound.searched.isNotEmpty()) {
+                Text("Searched for: ${notFound.searched}", color = Color.White.copy(alpha = 0.7f))
+            }
+            notFound.problems.forEach { Text("⚠ $it", color = Pink) }
+        } else {
+            Text("Find the right lyrics", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TvTextField(
+                text,
+                { text = it },
+                "Artist and song title",
+                Modifier.weight(1f),
+                onSubmit = { vm.searchLyricsManually(text) },
+            )
+            Spacer(Modifier.width(12.dp))
+            Button(onClick = { vm.searchLyricsManually(text) }) {
+                Text(if (vm.manualSearching) "Searching…" else "Search lyrics")
+            }
+        }
+        vm.manualError?.let { Text(it, color = Pink) }
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(vm.manualResults.take(MAX_RESULTS), key = { it.id }) { track ->
+                val kind = if (track.syncedLyrics != null) "✓ synced" else "text only"
+                Button(
+                    onClick = {
+                        vm.useLyrics(track)
+                        onPicked()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        listOfNotNull(track.trackName, track.artistName, formatTime(track.duration?.let { (it * 1000).toLong() }), kind)
+                            .joinToString("  ·  "),
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private const val MAX_RESULTS = 8

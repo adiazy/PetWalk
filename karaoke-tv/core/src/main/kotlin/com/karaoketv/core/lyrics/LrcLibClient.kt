@@ -2,6 +2,7 @@ package com.karaoketv.core.lyrics
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
@@ -89,7 +90,7 @@ class LrcLibClient(
             listOf("q" to title)
         }
         val (code, body) = request("/api/search", params)
-        if (code != 200) return emptyList()
+        if (code != 200) throw IOException("LRCLIB answered HTTP $code")
         return json.decodeFromString<List<LrcLibTrack>>(body)
     }
 

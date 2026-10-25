@@ -61,6 +61,15 @@ class LyricsSourcesTest {
     }
 
     @Test
+    fun repositoryReportsProviderErrors() {
+        val client = LrcLibClient(http = { _, _ -> 503 to "busy" })
+        val report = LyricsRepository(listOf(client)).search(LyricsQuery("Song", "Band"))
+        assertNull(report.lyrics)
+        assertEquals(listOf("LrcLibClient: LRCLIB answered HTTP 503"), report.problems)
+        assertEquals("Song", report.query.title)
+    }
+
+    @Test
     fun repositoryPrefersSyncedAndSurvivesFailures() {
         val plain = Lyrics(listOf(LyricLine(0, "p")), synced = false, "A")
         val synced = Lyrics(listOf(LyricLine(0, "s")), synced = true, "B")

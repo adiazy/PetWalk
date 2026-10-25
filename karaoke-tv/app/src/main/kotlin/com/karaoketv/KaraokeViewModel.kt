@@ -2,6 +2,7 @@ package com.karaoketv
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -49,7 +50,8 @@ import kotlinx.coroutines.withContext
 sealed interface LyricsState {
     data object Loading : LyricsState
     data class Found(val lyrics: Lyrics) : LyricsState
-    data object NotFound : LyricsState
+    /** [searched] describes the query; [problems] lists errors such as no internet. */
+    data class NotFound(val searched: String = "", val problems: List<String> = emptyList()) : LyricsState
 }
 
 @OptIn(UnstableApi::class)
@@ -95,7 +97,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     var nowPlaying by mutableStateOf<Song?>(null)
         private set
-    var lyrics by mutableStateOf<LyricsState>(LyricsState.NotFound)
+    var lyrics by mutableStateOf<LyricsState>(LyricsState.NotFound())
         private set
     var clock by mutableStateOf<PlaybackClock>(PlayerClock(player))
         private set
@@ -115,7 +117,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                 val song = nowPlaying ?: return
                 val title = mediaMetadata.title?.toString()?.takeIf { it.isNotBlank() } ?: return
                 val artist = mediaMetadata.artist?.toString()?.takeIf { it.isNotBlank() }
-                val worthRetrying = lyrics == LyricsState.NotFound || (song.artist == null && artist != null)
+                val worthRetrying = lyrics is LyricsState.NotFound || (song.artist == null && artist != null)
                 if (worthRetrying && (song.title != title || song.artist != artist)) {
                     val updated = song.copy(title = title, artist = artist ?: song.artist)
                     nowPlaying = updated
@@ -219,6 +221,8 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     fun play(song: Song) {
         nowPlaying = song
         lyricOffsetMs = 0
+        manualResults = emptyList()
+        manualError = null
         playbackError = null
         if (song.uri != null) {
             player.setMediaItem(MediaItem.fromUri(song.uri))
@@ -241,14 +245,49 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     private fun loadLyrics(song: Song) {
         lyricsJob?.cancel()
         if (song.title.isBlank()) {
-            lyrics = LyricsState.NotFound
+            lyrics = LyricsState.NotFound("(no song title)")
             return
         }
         lyrics = LyricsState.Loading
         lyricsJob = viewModelScope.launch {
-            val found = withContext(Dispatchers.IO) { lyricsRepository.find(song.toQuery()) }
-            lyrics = found?.let { LyricsState.Found(it) } ?: LyricsState.NotFound
+            val report = withContext(Dispatchers.IO) { lyricsRepository.search(song.toQuery()) }
+            val searched = listOfNotNull(report.query.title, report.query.artist?.let { "by $it" }).joinToString(" ")
+            Log.i(TAG, "Lyrics for \"$searched\": ${report.lyrics?.source ?: "not found"} ${report.problems}")
+            lyrics = report.lyrics?.let { LyricsState.Found(it) } ?: LyricsState.NotFound(searched, report.problems)
         }
+    }
+
+    var manualResults by mutableStateOf<List<LrcLibTrack>>(emptyList())
+        private set
+    var manualSearching by mutableStateOf(false)
+        private set
+    var manualError by mutableStateOf<String?>(null)
+        private set
+
+    /** Lets the singer search LRCLIB by hand from the karaoke screen when the automatic match fails. */
+    fun searchLyricsManually(text: String) {
+        if (text.isBlank()) return
+        manualSearching = true
+        manualError = null
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { lrcLib.search(text.trim()) } }
+            manualResults = result.getOrDefault(emptyList()).filter { it.syncedLyrics != null || it.plainLyrics != null }
+            manualError = result.exceptionOrNull()?.let { e ->
+                Log.w(TAG, "Manual lyrics search failed", e)
+                "Search failed: ${e.message ?: e::class.simpleName}"
+            } ?: if (manualResults.isEmpty()) "Nothing found for \"$text\"." else null
+            manualSearching = false
+        }
+    }
+
+    /** Shows the chosen result for the current song (kept in memory only). */
+    fun useLyrics(track: LrcLibTrack) {
+        lyricsJob?.cancel()
+        lrcLib.toLyrics(track)?.let { lyrics = LyricsState.Found(it) }
+    }
+
+    private companion object {
+        const val TAG = "KaraokeTV"
     }
 
     fun togglePlay() {

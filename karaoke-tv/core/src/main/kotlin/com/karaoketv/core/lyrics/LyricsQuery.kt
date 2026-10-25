@@ -40,16 +40,33 @@ fun interface LyricsProvider {
     fun find(query: LyricsQuery): Lyrics?
 }
 
+/** What a lookup searched for, what it found, and any provider errors along the way. */
+data class LyricsSearchReport(
+    val query: LyricsQuery,
+    val lyrics: Lyrics?,
+    val problems: List<String>,
+)
+
 /** Tries each provider in order; prefers synced lyrics, falling back to the first plain result. */
 class LyricsRepository(private val providers: List<LyricsProvider>) : LyricsProvider {
-    override fun find(query: LyricsQuery): Lyrics? {
+    override fun find(query: LyricsQuery): Lyrics? = search(query).lyrics
+
+    fun search(query: LyricsQuery): LyricsSearchReport {
         val q = query.cleaned()
         var plain: Lyrics? = null
+        val problems = mutableListOf<String>()
         for (provider in providers) {
-            val result = runCatching { provider.find(q) }.getOrNull() ?: continue
-            if (result.synced) return result
+            val result = try {
+                provider.find(q)
+            } catch (e: Exception) {
+                problems += "${provider.name}: ${e.message ?: e::class.simpleName}"
+                null
+            } ?: continue
+            if (result.synced) return LyricsSearchReport(q, result, problems)
             if (plain == null) plain = result
         }
-        return plain
+        return LyricsSearchReport(q, plain, problems)
     }
+
+    private val LyricsProvider.name get() = this::class.simpleName?.removeSuffix("Provider") ?: "Lyrics source"
 }
