@@ -1,5 +1,6 @@
 package com.karaoketv.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -34,6 +37,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
@@ -71,10 +75,38 @@ fun PlayerScreen(vm: KaraokeViewModel) {
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
 
+    val look = LocalAppearance.current
+    val art = vm.artwork.takeIf { look.albumArtBackground }
+    Box(Modifier.fillMaxSize().background(look.background.brush)) {
+        if (art != null) {
+            Image(art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            // Darken the art so the lyrics stay readable.
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        listOf(Color.Black.copy(alpha = 0.55f), Color.Black.copy(alpha = 0.7f), Color.Black.copy(alpha = 0.85f)),
+                    ),
+                ),
+            )
+        }
+        PlayerContent(vm, song, position, playing, duration, searchingByHand, { searchingByHand = it }, playFocus)
+    }
+}
+
+@Composable
+private fun PlayerContent(
+    vm: KaraokeViewModel,
+    song: Song,
+    position: Long,
+    playing: Boolean,
+    duration: Long?,
+    searchingByHand: Boolean,
+    setSearchingByHand: (Boolean) -> Unit,
+    playFocus: FocusRequester,
+) {
     Column(
         Modifier
             .fillMaxSize()
-            .background(LocalAppearance.current.background.brush)
             .onPreviewKeyEvent { e ->
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (e.key) {
@@ -86,7 +118,16 @@ fun PlayerScreen(vm: KaraokeViewModel) {
             }
             .padding(horizontal = 48.dp, vertical = 24.dp),
     ) {
-        Row(verticalAlignment = Alignment.Bottom) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            vm.artwork?.let {
+                Image(
+                    it,
+                    contentDescription = "Album art",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(72.dp).clip(RoundedCornerShape(8.dp)),
+                )
+                Spacer(Modifier.width(16.dp))
+            }
             Column(Modifier.weight(1f)) {
                 Text(song.title, style = MaterialTheme.typography.headlineSmall, color = Color.White)
                 Text(song.artist ?: "", style = MaterialTheme.typography.titleMedium, color = Pink)
@@ -102,7 +143,7 @@ fun PlayerScreen(vm: KaraokeViewModel) {
                 is LyricsState.NotFound -> LyricsSearchPanel(vm, song, state)
                 is LyricsState.Found ->
                     if (searchingByHand) {
-                        LyricsSearchPanel(vm, song, null) { searchingByHand = false }
+                        LyricsSearchPanel(vm, song, null) { setSearchingByHand(false) }
                     } else {
                         LyricsDisplay(state.lyrics, position + vm.lyricOffsetMs, duration)
                     }
@@ -122,7 +163,7 @@ fun PlayerScreen(vm: KaraokeViewModel) {
             Button(onClick = { vm.lyricOffsetMs += 250 }) { Text("Lyrics earlier") }
             Button(onClick = { vm.lyricOffsetMs -= 250 }) { Text("Lyrics later") }
             if (vm.lyrics is LyricsState.Found) {
-                Button(onClick = { searchingByHand = !searchingByHand }) {
+                Button(onClick = { setSearchingByHand(!searchingByHand) }) {
                     Text(if (searchingByHand) "Back to lyrics" else "Wrong lyrics?")
                 }
             }

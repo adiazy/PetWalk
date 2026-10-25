@@ -25,4 +25,19 @@ class SmbLocationTest {
         assertEquals(TrackName.Parsed("50 Cent", "In Da Club"), TrackName.parse("50 Cent - In Da Club.mp3"))
         assertEquals(TrackName.Parsed(null, "My Song"), TrackName.parse("My_Song.mp3"))
     }
+
+    @Test
+    fun takesArtistFromFoldersWhenFileNameHasNone() {
+        assertEquals(
+            TrackName.Parsed("Queen", "Bohemian Rhapsody"),
+            TrackName.parse("01 Bohemian Rhapsody.mp3", listOf("Queen", "A Night at the Opera")),
+        )
+        assertEquals(TrackName.Parsed("Adele", "Hello"), TrackName.parse("Hello.mp3", listOf("Adele")))
+        assertEquals(
+            TrackName.Parsed("Band", "Song"),
+            TrackName.parse("Band - Song.mp3", listOf("Other", "Album")),
+        )
+        assertEquals(TrackName.Parsed(null, "Song"), TrackName.parse("Song.mp3", listOf("Various Artists", "Hits")))
+        assertEquals(TrackName.Parsed(null, "Song"), TrackName.parse("Song.mp3", emptyList()))
+    }
 }

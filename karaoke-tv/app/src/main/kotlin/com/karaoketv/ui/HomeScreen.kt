@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -62,6 +63,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.karaoketv.KaraokeViewModel
 import com.karaoketv.media.NetworkFolder
+import com.karaoketv.media.Song
 
 private enum class Tab(val label: String) {
     Library("My music"),
@@ -151,23 +153,50 @@ private fun LibraryPane(vm: KaraokeViewModel) {
                 "No music found. Put MP3/FLAC/M4A files (and optional .lrc lyrics with the same name) " +
                     "in the network folder, then press Refresh.",
             )
-            else -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(260.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(bottom = 24.dp),
-            ) {
-                items(vm.library, key = { it.id }) { song ->
-                    val where = if (song.uri?.scheme == "smb") "Network" else "This TV"
-                    val badge = if (song.hasLyricsFile) "  ♪ lyrics" else ""
-                    SongCard(song.title, song.artist ?: "Unknown artist", "$where  ${formatTime(song.durationMs)}$badge") {
-                        vm.play(song)
+            else -> {
+                val groups = remember(vm.library) { groupByArtist(vm.library) }
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(260.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                ) {
+                    for ((artist, songs) in groups) {
+                        item(key = "artist:$artist", span = { GridItemSpan(maxLineSpan) }) {
+                            Text(
+                                "$artist  ·  ${songs.size}",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = Pink,
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
+                        }
+                        items(songs, key = { it.id }) { song ->
+                            val where = if (song.uri?.scheme == "smb") "Network" else "This TV"
+                            val badge = if (song.hasLyricsFile) "  ♪ lyrics" else ""
+                            SongCard(song.title, song.album ?: where, "${formatTime(song.durationMs)}$badge") {
+                                vm.play(song)
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private const val UNKNOWN_ARTIST = "Unknown artist"
+
+/** Artists A–Z (unknown last), each with its songs A–Z. */
+private fun groupByArtist(songs: List<Song>): List<Pair<String, List<Song>>> =
+    songs
+        .groupBy { song ->
+            song.artist?.trim()?.takeUnless { it.isEmpty() || it.equals("<unknown>", ignoreCase = true) } ?: UNKNOWN_ARTIST
+        }
+        // Merge "queen" and "Queen" under one heading.
+        .entries
+        .groupBy({ it.key.lowercase() }, { it })
+        .map { (_, entries) -> entries.first().key to entries.flatMap { it.value }.sortedBy { it.title.lowercase() } }
+        .sortedWith(compareBy<Pair<String, List<Song>>> { it.first == UNKNOWN_ARTIST }.thenBy { it.first.lowercase() })
 
 @Composable
 private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {

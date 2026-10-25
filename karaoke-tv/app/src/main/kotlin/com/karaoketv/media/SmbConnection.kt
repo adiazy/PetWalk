@@ -78,6 +78,15 @@ class SmbConnection(
         null,
     )
 
+    /** Reads a small file (e.g. cover.jpg), or null if it's missing or larger than [maxBytes]. */
+    fun readBytes(path: String, maxBytes: Long = 8L * 1024 * 1024): ByteArray? {
+        if (!share().fileExists(path)) return null
+        return openRead(path).use { file ->
+            if (file.fileInformation.standardInformation.endOfFile > maxBytes) null
+            else file.inputStream.use { it.readBytes() }
+        }
+    }
+
     fun readText(path: String): String? {
         if (!share().fileExists(path)) return null
         return openRead(path).use { it.inputStream.bufferedReader().readText() }
@@ -88,6 +97,7 @@ class SmbConnection(
         val disk = share()
         val songs = mutableListOf<Song>()
         fun walk(dir: String, depth: Int) {
+            val folders = dir.removePrefix(location.path).split('\\').filter { it.isNotEmpty() }
             val entries = disk.list(dir)
             val names = entries.mapTo(HashSet()) { it.fileName.lowercase() }
             for (entry in entries) {
@@ -98,7 +108,7 @@ class SmbConnection(
                 if (isDir) {
                     if (depth < MAX_DEPTH) walk(path, depth + 1)
                 } else if (name.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS) {
-                    val parsed = TrackName.parse(name)
+                    val parsed = TrackName.parse(name, folders)
                     val base = name.substringBeforeLast('.').lowercase()
                     val uri = uriFor(path)
                     songs += Song(

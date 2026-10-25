@@ -34,4 +34,19 @@ object TrackName {
         val parts = withoutNumber.split(separator, limit = 2)
         return if (parts.size == 2) Parsed(parts[0].trim(), parts[1].trim()) else Parsed(null, withoutNumber)
     }
+
+    /**
+     * Like [parse], but when the file name has no artist, takes it from the folders below the
+     * music root: `Artist\Album\song.mp3` or `Artist\song.mp3`.
+     */
+    fun parse(fileName: String, foldersBelowRoot: List<String>): Parsed {
+        val parsed = parse(fileName)
+        if (parsed.artist != null || foldersBelowRoot.isEmpty()) return parsed
+        val folder = if (foldersBelowRoot.size >= 2) foldersBelowRoot[foldersBelowRoot.size - 2] else foldersBelowRoot[0]
+        return if (folder.matches(GENERIC_FOLDER)) parsed else parsed.copy(artist = folder.trim())
+    }
+
+    private val GENERIC_FOLDER = Regex(
+        """(?i)\s*(various( artists)?|va|compilations?|soundtracks?|ost|karaoke|misc(ellaneous)?|music|mp3s?|songs|singles|unknown( artist)?|new folder.*|\d+)\s*""",
+    )
 }

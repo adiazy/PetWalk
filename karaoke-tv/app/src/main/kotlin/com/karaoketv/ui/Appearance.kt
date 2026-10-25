@@ -47,6 +47,8 @@ data class Appearance(
     val font: FontChoice = FontChoice.Modern,
     val textSize: TextSize = TextSize.Medium,
     val highlight: HighlightColor = HighlightColor.Gold,
+    /** Show the song's album art behind the lyrics when there is any. */
+    val albumArtBackground: Boolean = true,
 )
 
 val LocalAppearance = staticCompositionLocalOf { Appearance() }
@@ -60,6 +62,7 @@ class AppearanceStore(context: Context) {
         font = enumOr(prefs.getString(KEY_FONT, null), FontChoice.Modern),
         textSize = enumOr(prefs.getString(KEY_SIZE, null), TextSize.Medium),
         highlight = enumOr(prefs.getString(KEY_HIGHLIGHT, null), HighlightColor.Gold),
+        albumArtBackground = prefs.getBoolean(KEY_ALBUM_ART, true),
     )
 
     fun save(a: Appearance) {
@@ -68,6 +71,7 @@ class AppearanceStore(context: Context) {
             .putString(KEY_FONT, a.font.name)
             .putString(KEY_SIZE, a.textSize.name)
             .putString(KEY_HIGHLIGHT, a.highlight.name)
+            .putBoolean(KEY_ALBUM_ART, a.albumArtBackground)
             .apply()
     }
 
@@ -79,5 +83,6 @@ class AppearanceStore(context: Context) {
         const val KEY_FONT = "font"
         const val KEY_SIZE = "size"
         const val KEY_HIGHLIGHT = "highlight"
+        const val KEY_ALBUM_ART = "album_art_background"
     }
 }

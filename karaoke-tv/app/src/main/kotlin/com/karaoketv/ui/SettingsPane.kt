@@ -59,7 +59,12 @@ private fun SettingsContent(vm: KaraokeViewModel) {
             }
         }
         item {
-            OptionRow("Background", BackgroundStyle.entries, look.background, { it.label }) { choice ->
+            OptionRow("Album art behind the lyrics", listOf(true, false), look.albumArtBackground, { if (it) "On" else "Off" }) { choice ->
+                vm.updateAppearance { it.copy(albumArtBackground = choice) }
+            }
+        }
+        item {
+            OptionRow("Background (when there's no album art)", BackgroundStyle.entries, look.background, { it.label }) { choice ->
                 vm.updateAppearance { it.copy(background = choice) }
             }
         }

@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.AudioAttributes
@@ -27,8 +28,10 @@ import com.karaoketv.core.library.SmbLocation
 import com.karaoketv.core.lyrics.LrcLibClient
 import com.karaoketv.core.lyrics.LrcLibTrack
 import com.karaoketv.core.lyrics.Lyrics
+import com.karaoketv.core.lyrics.LyricsOvhClient
 import com.karaoketv.core.lyrics.LyricsRepository
 import com.karaoketv.core.lyrics.SidecarLrcProvider
+import com.karaoketv.media.Artwork
 import com.karaoketv.media.KaraokeDataSourceFactory
 import com.karaoketv.media.LocalLibrary
 import com.karaoketv.media.NetworkFolder
@@ -71,6 +74,8 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             SidecarLrcProvider(),
             SmbSidecarLrcProvider { smb },
             lrcLib,
+            // Backup when LRCLIB is busy or has nothing (plain text only).
+            LyricsOvhClient(),
         ),
     )
 
@@ -107,11 +112,30 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     var playbackError by mutableStateOf<String?>(null)
         private set
 
+    /** Album art for the current song: embedded in the file if present, else from its folder. */
+    var artwork by mutableStateOf<ImageBitmap?>(null)
+        private set
+    private var artworkIsEmbedded = false
+    private var artworkJob: Job? = null
+
     private var lyricsJob: Job? = null
 
     init {
         player.addListener(object : Player.Listener {
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                // Cover art embedded in the file beats a folder image.
+                mediaMetadata.artworkData?.let { bytes ->
+                    val songId = nowPlaying?.id
+                    viewModelScope.launch {
+                        val image = withContext(Dispatchers.Default) { runCatching { Artwork.decode(bytes) }.getOrNull() }
+                        if (image != null && nowPlaying?.id == songId) {
+                            artworkJob?.cancel()
+                            artworkIsEmbedded = true
+                            artwork = image
+                        }
+                    }
+                }
+
                 // Streams and network files often only reveal their real title/artist tags once
                 // playing. Retry with them if the file-name guess found nothing or had no artist.
                 val song = nowPlaying ?: return
@@ -224,6 +248,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         manualResults = emptyList()
         manualError = null
         playbackError = null
+        loadArtwork(song)
         if (song.uri != null) {
             player.setMediaItem(MediaItem.fromUri(song.uri))
             player.prepare()
@@ -254,6 +279,19 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             val searched = listOfNotNull(report.query.title, report.query.artist?.let { "by $it" }).joinToString(" ")
             Log.i(TAG, "Lyrics for \"$searched\": ${report.lyrics?.source ?: "not found"} ${report.problems}")
             lyrics = report.lyrics?.let { LyricsState.Found(it) } ?: LyricsState.NotFound(searched, report.problems)
+        }
+    }
+
+    private fun loadArtwork(song: Song) {
+        artworkJob?.cancel()
+        artwork = null
+        artworkIsEmbedded = false
+        val connection = smb
+        artworkJob = viewModelScope.launch {
+            val image = withContext(Dispatchers.IO) {
+                runCatching { Artwork.forSong(getApplication(), song, connection) }.getOrNull()
+            }
+            if (!artworkIsEmbedded && nowPlaying?.id == song.id) artwork = image
         }
     }
 

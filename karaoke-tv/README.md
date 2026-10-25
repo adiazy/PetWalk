@@ -10,6 +10,7 @@ An Android TV karaoke app: plays your music with time-synced, highlighted lyrics
 | **My music → this TV**: songs on the TV's storage and USB drives | Audio + lyrics |
 | **Sidecar `.lrc` files**: `Song.mp3` + `Song.lrc` in the same folder | Synced lyrics, offline |
 | **[LRCLIB](https://lrclib.net)**: free, open lyrics database, no API key | Synced lyrics for millions of songs, looked up when a song plays (nothing is saved) |
+| **[lyrics.ovh](https://lyricsovh.docs.apiary.io)**: free backup, no API key | Plain (unsynced) lyrics when LRCLIB is busy or has nothing; needs the artist name |
 | **Play from URL**: any direct MP3/AAC/FLAC/HLS link (NAS, Jellyfin/Plex direct links, radio) | Audio; lyrics looked up from the title you enter or from the stream's metadata |
 | **Find lyrics online, lyrics-only mode** | Timed lyrics on the TV while the backing track plays from a phone or speaker |
 
@@ -31,8 +32,11 @@ path (`\\server\share\folder` or `smb://server/share/folder`) and, if the share 
 username and password (`DOMAIN\user` works too). You can also hide music stored on the TV itself.
 
 - Songs stream directly from the share, so seeking works and nothing is copied to the TV.
-- Titles and artists are guessed from file names like `01 - Artist - Title.mp3`, then corrected
-  from the song's tags once it starts playing.
+- Songs are listed by artist (A–Z, "Unknown artist" last), then by title. Artist and title come from
+  file names like `01 - Artist - Title.mp3`; if the name has no artist, the folder is used
+  (`Artist\Album\song.mp3` or `Artist\song.mp3`). Tags inside the file correct them once it plays.
+- Album art fills the karaoke screen behind the lyrics: the cover embedded in the file, or
+  `cover.jpg` / `folder.jpg` / `front.jpg` in the song's folder. Turn it off in **Look & feel**.
 - Lyrics: an existing `Song.lrc` next to `Song.mp3` on the share is used first (songs with one show
   "♪ lyrics"). Otherwise the lyrics are searched online (LRCLIB) when the song plays. Online lyrics are
   only kept in memory: the app never downloads or saves `.lrc` files, on the share or on the TV.
