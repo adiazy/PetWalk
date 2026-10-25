@@ -45,28 +45,32 @@ $metadata = Join-Path $PSScriptRoot "app\build\outputs\apk\debug\output-metadata
 $package = (Get-Content $metadata -Raw | ConvertFrom-Json).applicationId
 Write-Host "4/4 Opening Karaoke TV ($package) ..." -ForegroundColor Cyan
 
-# TVs with profiles (Google TV) install into the active profile, e.g. user 10, while plain
-# adb shell commands default to user 0, so always target the current profile.
-# Read it from the TV's package info ("User 10: ... installed=true"); some TVs (e.g. Android 11)
-# don't support "am get-current-user".
-$user = $null
-$installedFor = adb -s $device shell dumpsys package $package 2>&1 |
-    Select-String 'User (\d+):.*installed=true' | ForEach-Object { $_.Matches[0].Groups[1].Value }
-if ($installedFor) {
-    $current = ((adb -s $device shell am get-current-user 2>&1) -join "").Trim()
-    $user = if ($installedFor -contains $current) { $current } else { @($installedFor)[0] }
+# On TVs with several profiles, "adb install" can land in a profile that isn't the one on screen
+# (on this TV: installed for user 10, while user 0 is in use). Enable it for every profile.
+$users = adb -s $device shell pm list users 2>&1 |
+    Select-String 'UserInfo\{(\d+):' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+foreach ($u in $users) {
+    adb -s $device shell pm install-existing --user $u $package 2>&1 | Out-Null
 }
-if (-not $user) { $user = "current" }
 
-# Ask the TV which screen its launcher opens for this app, then start that one.
-$activity = $null
-foreach ($category in "android.intent.category.LEANBACK_LAUNCHER", "android.intent.category.LAUNCHER") {
-    $resolved = (adb -s $device shell cmd package resolve-activity --brief --user $user -c $category $package 2>&1 |
-        Select-Object -Last 1).ToString().Trim()
-    if ($resolved -match "/") { $activity = $resolved; break }
+# The screen to open, as listed in the APK (falls back to the usual MainActivity).
+$activity = "$package/.MainActivity"
+$aapt = Get-ChildItem (Join-Path $env:LOCALAPPDATA "Android\Sdk\build-tools") -Recurse -Filter aapt.exe -ErrorAction SilentlyContinue |
+    Sort-Object FullName -Descending | Select-Object -First 1
+if ($aapt) {
+    $launchable = & $aapt.FullName dump badging $apk 2>&1 | Select-String "leanback-launchable-activity: name='([^']+)'"
+    if ($launchable) { $activity = "$package/" + $launchable.Matches[0].Groups[1].Value }
 }
+
+# Try the profile on screen first, then each profile explicitly.
+$opened = $false
+foreach ($target in @("current") + $users) {
+    $start = (adb -s $device shell am start --user $target -n $activity 2>&1) -join "`n"
+    if ($start -notmatch "Error|Exception") { $opened = $true; $user = $target; break }
+}
+$activity = if ($opened) { $activity } else { $null }
 if (-not $activity) {
-    Write-Host "The TV has $package installed but found no screen to open for profile $user. Diagnostics:" -ForegroundColor Red
+    Write-Host "The TV has $package installed but could not be opened in any profile. Diagnostics:" -ForegroundColor Red
 
     Write-Host "`n--- Manifest on this PC ---" -ForegroundColor Yellow
     Select-String -Path (Join-Path $PSScriptRoot "app\src\main\AndroidManifest.xml") -Pattern "activity|category|<application" |
@@ -75,8 +79,6 @@ if (-not $activity) {
     Write-Host "`n--- Local changes (git status) ---" -ForegroundColor Yellow
     git -C $PSScriptRoot status --short | Out-Host
 
-    $aapt = Get-ChildItem (Join-Path $env:LOCALAPPDATA "Android\Sdk\build-tools") -Recurse -Filter aapt.exe -ErrorAction SilentlyContinue |
-        Sort-Object FullName -Descending | Select-Object -First 1
     if ($aapt) {
         Write-Host "`n--- Inside the built APK ---" -ForegroundColor Yellow
         & $aapt.FullName dump badging $apk 2>&1 | Select-String "package:|launchable|leanback|sdkVersion" | Out-Host
@@ -86,15 +88,12 @@ if (-not $activity) {
     adb -s $device shell dumpsys package $package 2>&1 |
         Select-String "karaoketv/|versionName|minSdk|targetSdk|User \d|installed=" | Select-Object -First 25 | Out-Host
     adb -s $device shell getprop ro.build.version.release | ForEach-Object { "Android version: $_" } | Out-Host
+    Write-Host "`n--- Profiles on the TV ---" -ForegroundColor Yellow
+    adb -s $device shell pm list users | Out-Host
+    adb -s $device shell dumpsys activity activities 2>&1 | Select-String "mCurrentUser|mResumedActivity" | Select-Object -First 3 | Out-Host
 
     Write-Host "`nCopy everything above and send it to Claude." -ForegroundColor Yellow
     exit 1
 }
 
-$start = (adb -s $device shell am start --user $user -n $activity 2>&1) -join "`n"
-Write-Host $start
-if ($start -match "Error") {
-    Write-Host "Couldn't open $activity. Copy the message above and send it to Claude." -ForegroundColor Red
-    exit 1
-}
-Write-Host "Done! Karaoke TV is open on the TV." -ForegroundColor Green
+Write-Host "Done! Karaoke TV is open on the TV (profile $user)." -ForegroundColor Green
