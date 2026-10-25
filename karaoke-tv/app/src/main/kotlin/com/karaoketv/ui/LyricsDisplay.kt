@@ -26,6 +26,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import com.karaoketv.core.lyrics.Lyrics
@@ -50,7 +51,7 @@ private fun SyncedLyrics(lyrics: Lyrics, positionMs: Long, durationMs: Long?, mo
         if (current == -1 && firstStart - positionMs in 1..COUNTDOWN_MS) {
             // Get-ready dots before the first line, like a real karaoke machine.
             val dots = ((firstStart - positionMs) / 1000 + 1).toInt()
-            Text("● ".repeat(dots).trim(), color = look.highlight.color, fontSize = 40.sp * scale)
+            Text("● ".repeat(dots).trim(), color = look.highlight.color, fontSize = 40.sp * scale, lineHeight = LYRIC_LINE_HEIGHT)
         }
         for (offset in -1..2) {
             val i = current + offset
@@ -62,6 +63,7 @@ private fun SyncedLyrics(lyrics: Lyrics, positionMs: Long, durationMs: Long?, mo
                 Text(
                     text,
                     fontSize = (if (offset < 0) 30.sp else 38.sp) * scale,
+                    lineHeight = LYRIC_LINE_HEIGHT,
                     fontFamily = look.font.family,
                     color = Color.White.copy(alpha = if (offset < 0) 0.35f else 0.7f),
                     textAlign = TextAlign.Center,
@@ -81,6 +83,7 @@ fun HighlightedLine(text: String, progress: Float, fontSize: TextUnit) {
         Text(
             text,
             fontSize = fontSize,
+            lineHeight = LYRIC_LINE_HEIGHT,
             fontFamily = look.font.family,
             fontWeight = look.font.weight,
             color = Color.White,
@@ -89,6 +92,7 @@ fun HighlightedLine(text: String, progress: Float, fontSize: TextUnit) {
         Text(
             text,
             fontSize = fontSize,
+            lineHeight = LYRIC_LINE_HEIGHT,
             fontFamily = look.font.family,
             fontWeight = look.font.weight,
             color = look.highlight.color,
@@ -135,6 +139,7 @@ private fun ScrollingLyrics(lyrics: Lyrics, positionMs: Long, durationMs: Long?,
             "Lyrics aren't time-synced for this song, so they scroll with the music.",
             color = look.highlight.color,
             fontSize = 18.sp,
+            lineHeight = LYRIC_LINE_HEIGHT,
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             textAlign = TextAlign.Center,
         )
@@ -143,6 +148,7 @@ private fun ScrollingLyrics(lyrics: Lyrics, positionMs: Long, durationMs: Long?,
                 Text(
                     line.text,
                     fontSize = 34.sp * look.textSize.scale,
+                    lineHeight = LYRIC_LINE_HEIGHT,
                     fontFamily = look.font.family,
                     color = if (i == target) look.highlight.color else Color.White.copy(alpha = 0.55f),
                     textAlign = TextAlign.Center,
@@ -154,3 +160,9 @@ private fun ScrollingLyrics(lyrics: Lyrics, positionMs: Long, durationMs: Long?,
 }
 
 private const val COUNTDOWN_MS = 3_000L
+
+/**
+ * Line spacing relative to each text's own size. Without it the theme's fixed 24sp line height
+ * applies, and wrapped lyric lines (drawn at 30-56sp) overlap each other.
+ */
+private val LYRIC_LINE_HEIGHT = 1.2.em
