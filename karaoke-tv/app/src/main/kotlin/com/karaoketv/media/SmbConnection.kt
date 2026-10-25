@@ -83,12 +83,25 @@ class SmbConnection(
         return openRead(path).use { it.inputStream.bufferedReader().readText() }
     }
 
+    fun writeText(path: String, text: String) {
+        share().openFile(
+            path,
+            EnumSet.of(AccessMask.GENERIC_WRITE),
+            null,
+            SMB2ShareAccess.ALL,
+            SMB2CreateDisposition.FILE_OVERWRITE_IF,
+            null,
+        ).use { file -> file.outputStream.use { it.write(text.toByteArray(Charsets.UTF_8)) } }
+    }
+
     /** Recursively lists audio files under the configured folder. */
     fun scan(): List<Song> {
         val disk = share()
         val songs = mutableListOf<Song>()
         fun walk(dir: String, depth: Int) {
-            for (entry in disk.list(dir)) {
+            val entries = disk.list(dir)
+            val names = entries.mapTo(HashSet()) { it.fileName.lowercase() }
+            for (entry in entries) {
                 val name = entry.fileName
                 if (name == "." || name == ".." || name.startsWith(".")) continue
                 val path = if (dir.isEmpty()) name else "$dir\\$name"
@@ -97,6 +110,7 @@ class SmbConnection(
                     if (depth < MAX_DEPTH) walk(path, depth + 1)
                 } else if (name.substringAfterLast('.', "").lowercase() in AUDIO_EXTENSIONS) {
                     val parsed = TrackName.parse(name)
+                    val base = name.substringBeforeLast('.').lowercase()
                     val uri = uriFor(path)
                     songs += Song(
                         id = "smb:$path",
@@ -104,6 +118,7 @@ class SmbConnection(
                         artist = parsed.artist,
                         uri = uri,
                         path = uri.toString(),
+                        hasLyricsFile = LYRICS_EXTENSIONS.any { "$base.$it" in names },
                     )
                 }
             }
@@ -142,6 +157,7 @@ class SmbConnection(
 
     companion object {
         val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "flac", "ogg", "opus", "wav", "wma")
+        val LYRICS_EXTENSIONS = listOf("lrc", "txt")
         private const val MAX_DEPTH = 8
     }
 }

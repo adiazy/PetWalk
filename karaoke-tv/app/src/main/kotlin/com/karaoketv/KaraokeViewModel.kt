@@ -64,10 +64,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     private var smb: SmbConnection? = connect(networkFolder)
 
     private val lrcLib = LrcLibClient()
+    private val smbLyrics = SmbSidecarLrcProvider { smb }
     private val lyricsRepository = LyricsRepository(
         listOf(
             SidecarLrcProvider(),
-            SmbSidecarLrcProvider { smb },
+            smbLyrics,
             CachedLyricsProvider(File(app.filesDir, "lyrics"), lrcLib),
         ),
     )
@@ -246,8 +247,63 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         }
         lyrics = LyricsState.Loading
         lyricsJob = viewModelScope.launch {
-            val found = withContext(Dispatchers.IO) { lyricsRepository.find(song.toQuery()) }
+            val found = withContext(Dispatchers.IO) {
+                lyricsRepository.find(song.toQuery())?.also { saveToShareIfNew(song, it) }
+            }
             lyrics = found?.let { LyricsState.Found(it) } ?: LyricsState.NotFound
+        }
+    }
+
+    /** Runs on IO. Writes online lyrics next to a network song and marks it in the library. */
+    private fun saveToShareIfNew(song: Song, found: com.karaoketv.core.lyrics.Lyrics): Boolean {
+        val path = song.path ?: return false
+        if (!networkFolder.saveLyricsToShare || !path.startsWith("smb://")) return false
+        if (found.source.startsWith("Network")) return false
+        val saved = smbLyrics.save(path, found)
+        if (saved) {
+            viewModelScope.launch {
+                library = library.map { if (it.id == song.id) it.copy(hasLyricsFile = true) else it }
+            }
+        }
+        return saved
+    }
+
+    var lyricsBatch by mutableStateOf<String?>(null)
+        private set
+    private var lyricsBatchJob: Job? = null
+
+    /** Looks up lyrics online for every network song without a .lrc file and saves them. */
+    fun findLyricsForAll() {
+        if (lyricsBatchJob?.isActive == true) {
+            lyricsBatchJob?.cancel()
+            lyricsBatch = "Stopped."
+            return
+        }
+        val todo = library.filter { it.path?.startsWith("smb://") == true && !it.hasLyricsFile }
+        if (todo.isEmpty()) {
+            lyricsBatch = "Every network song already has a lyrics file."
+            return
+        }
+        lyricsBatchJob = viewModelScope.launch {
+            var found = 0
+            var saved = 0
+            for ((i, song) in todo.withIndex()) {
+                lyricsBatch = "Finding lyrics ${i + 1}/${todo.size}: ${song.title}  (found $found)"
+                val result = withContext(Dispatchers.IO) {
+                    val lyrics = runCatching { lyricsRepository.find(song.toQuery()) }.getOrNull()
+                    lyrics to (lyrics != null && saveToShareIfNew(song, lyrics))
+                }
+                if (result.first != null) found++
+                if (result.second) saved++
+            }
+            lyricsBatch = buildString {
+                append("Done: found lyrics for $found of ${todo.size} songs")
+                if (networkFolder.saveLyricsToShare) {
+                    append(", saved $saved .lrc files")
+                    if (saved < found) append(" (some couldn't be written; is the share read-only?)")
+                }
+                append('.')
+            }
         }
     }
 

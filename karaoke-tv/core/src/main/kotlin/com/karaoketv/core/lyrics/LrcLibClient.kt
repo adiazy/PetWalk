@@ -67,7 +67,10 @@ class LrcLibClient(
             }
         }
 
-        val results = search(query.title, query.artist)
+        // File-name guesses are often slightly off, so fall back to a free-text search.
+        val results = search(query.title, query.artist).ifEmpty {
+            if (query.artist != null) search("${query.artist} ${query.title}") else emptyList()
+        }
         val best = results
             .filter { it.syncedLyrics != null || it.plainLyrics != null || it.instrumental }
             .sortedWith(

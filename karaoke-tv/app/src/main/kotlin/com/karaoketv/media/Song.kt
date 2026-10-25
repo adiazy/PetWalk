@@ -14,6 +14,8 @@ data class Song(
     val uri: Uri? = null,
     val path: String? = null,
     val preloadedLyrics: Lyrics? = null,
+    /** A .lrc/.txt lyrics file exists next to the song (network songs only). */
+    val hasLyricsFile: Boolean = false,
 ) {
     fun toQuery() = LyricsQuery(title, artist, album, durationMs, path)
 }

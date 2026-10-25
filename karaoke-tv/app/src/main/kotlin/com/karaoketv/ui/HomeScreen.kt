@@ -124,19 +124,22 @@ private fun LibraryPane(vm: KaraokeViewModel) {
 
     Column {
         Text("My music", style = MaterialTheme.typography.titleLarge)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "📁 ${vm.networkFolder.path}" + if (vm.networkFolder.includeDeviceMusic) "  + this TV" else "",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.7f),
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        Text(
+            "📁 ${vm.networkFolder.path}" + if (vm.networkFolder.includeDeviceMusic) "  + this TV" else "",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = 0.7f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { editing = !editing }) { Text(if (editing) "Cancel" else "Change folder") }
-            Spacer(Modifier.width(12.dp))
             Button(onClick = vm::loadLibrary) { Text("Refresh") }
+            Button(onClick = vm::findLyricsForAll) {
+                Text(if (vm.lyricsBatch?.startsWith("Finding") == true) "Stop" else "Find lyrics for all songs")
+            }
         }
+        vm.lyricsBatch?.let { Text(it, color = Gold, style = MaterialTheme.typography.bodyMedium) }
         Spacer(Modifier.height(12.dp))
         if (editing) {
             FolderEditor(vm) { editing = false }
@@ -160,7 +163,8 @@ private fun LibraryPane(vm: KaraokeViewModel) {
             ) {
                 items(vm.library, key = { it.id }) { song ->
                     val where = if (song.uri?.scheme == "smb") "Network" else "This TV"
-                    SongCard(song.title, song.artist ?: "Unknown artist", "$where  ${formatTime(song.durationMs)}") {
+                    val badge = if (song.hasLyricsFile) "  ♪ lyrics" else ""
+                    SongCard(song.title, song.artist ?: "Unknown artist", "$where  ${formatTime(song.durationMs)}$badge") {
                         vm.play(song)
                     }
                 }
@@ -176,6 +180,7 @@ private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
     var user by remember { mutableStateOf(current.username) }
     var password by remember { mutableStateOf(current.password) }
     var includeDevice by remember { mutableStateOf(current.includeDeviceMusic) }
+    var saveLyrics by remember { mutableStateOf(current.saveLyricsToShare) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Network folder (Windows share or NAS)", style = MaterialTheme.typography.titleMedium)
         TvTextField(path, { path = it }, """\\192.168.1.99\Public\Shared Music""", Modifier.fillMaxWidth())
@@ -190,9 +195,14 @@ private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
             Button(onClick = { includeDevice = !includeDevice }) {
                 Text(if (includeDevice) "✓ Also show music on this TV" else "Also show music on this TV")
             }
+            Button(onClick = { saveLyrics = !saveLyrics }) {
+                Text(if (saveLyrics) "✓ Save found lyrics as .lrc" else "Save found lyrics as .lrc")
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { path = NetworkFolder.DEFAULT_PATH }) { Text("Use default") }
             Button(onClick = {
-                vm.updateNetworkFolder(NetworkFolder(path.trim(), user.trim(), password, includeDevice))
+                vm.updateNetworkFolder(NetworkFolder(path.trim(), user.trim(), password, includeDevice, saveLyrics))
                 onDone()
             }) { Text("Save & scan") }
         }

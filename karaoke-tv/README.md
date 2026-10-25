@@ -33,7 +33,11 @@ username and password (`DOMAIN\user` works too). You can also hide music stored 
 - Songs stream directly from the share, so seeking works and nothing is copied to the TV.
 - Titles and artists are guessed from file names like `01 - Artist - Title.mp3`, then corrected
   from the song's tags once it starts playing.
-- Lyrics: `Song.lrc` next to `Song.mp3` on the share is used first, then LRCLIB.
+- Lyrics: `Song.lrc` next to `Song.mp3` on the share is used first. If it's missing, the lyrics are
+  searched online (LRCLIB) and saved back to the share as `Song.lrc`, so they're there next time
+  and for other karaoke apps. **Find lyrics for all songs** does this for the whole library in one go.
+  Songs that already have a lyrics file show "♪ lyrics". Saving needs write access to the share;
+  turn it off under **Change folder** if you don't want files added.
 - Needs SMB 2 or newer, which is the default on Windows 10/11 and current NAS firmware.
   The login is saved on the TV in plain app storage.
 

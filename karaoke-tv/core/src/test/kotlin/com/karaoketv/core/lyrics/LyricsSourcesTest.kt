@@ -46,6 +46,21 @@ class LyricsSourcesTest {
     }
 
     @Test
+    fun lrcLibFallsBackToFreeTextSearch() {
+        val urls = mutableListOf<String>()
+        val client = LrcLibClient(http = { url, _ ->
+            urls += url
+            when {
+                "/api/get" in url -> 404 to "{}"
+                "q=" in url -> 200 to """[{"id":9,"syncedLyrics":"[00:01.00]found"}]"""
+                else -> 200 to "[]"
+            }
+        })
+        assertEquals("found", client.find(LyricsQuery("Song", "Band"))?.lines?.single()?.text)
+        assertEquals("https://lrclib.net/api/search?q=Band%20Song", urls.last())
+    }
+
+    @Test
     fun repositoryPrefersSyncedAndSurvivesFailures() {
         val plain = Lyrics(listOf(LyricLine(0, "p")), synced = false, "A")
         val synced = Lyrics(listOf(LyricLine(0, "s")), synced = true, "B")
