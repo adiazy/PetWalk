@@ -32,7 +32,8 @@ path (`\\server\share\folder` or `smb://server/share/folder`) and, if the share 
 username and password (`DOMAIN\user` works too). You can also hide music stored on the TV itself.
 
 - Songs stream directly from the share, so seeking works and nothing is copied to the TV.
-- Songs are listed by artist (A–Z, "Unknown artist" last), then by title. Artist and title come from
+- My music is a compact list of artists (A–Z, "Unknown artist" last). Select an artist to open its
+  songs (A–Z) right below it; select it again or press Back to close it. Artist and title come from
   file names like `01 - Artist - Title.mp3`; if the name has no artist, the folder is used
   (`Artist\Album\song.mp3` or `Artist\song.mp3`). Tags inside the file correct them once it plays.
 - Album art fills the karaoke screen behind the lyrics: the cover embedded in the file, or

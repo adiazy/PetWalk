@@ -3,6 +3,7 @@ package com.karaoketv.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,11 +21,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -54,12 +53,15 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.tv.material3.Button
 import androidx.tv.material3.Card
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.karaoketv.KaraokeViewModel
 import com.karaoketv.media.NetworkFolder
@@ -153,34 +155,98 @@ private fun LibraryPane(vm: KaraokeViewModel) {
                 "No music found. Put MP3/FLAC/M4A files (and optional .lrc lyrics with the same name) " +
                     "in the network folder, then press Refresh.",
             )
-            else -> {
-                val groups = remember(vm.library) { groupByArtist(vm.library) }
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(260.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    contentPadding = PaddingValues(bottom = 24.dp),
-                ) {
-                    for ((artist, songs) in groups) {
-                        item(key = "artist:$artist", span = { GridItemSpan(maxLineSpan) }) {
-                            Text(
-                                "$artist  ·  ${songs.size}",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = Pink,
-                                modifier = Modifier.padding(top = 12.dp),
-                            )
-                        }
-                        items(songs, key = { it.id }) { song ->
-                            val where = if (song.uri?.scheme == "smb") "Network" else "This TV"
-                            val badge = if (song.hasLyricsFile) "  ♪ lyrics" else ""
-                            SongCard(song.title, song.album ?: where, "${formatTime(song.durationMs)}$badge") {
-                                vm.play(song)
-                            }
-                        }
+            else -> ArtistList(vm)
+        }
+    }
+}
+
+/**
+ * Artists as compact rows, collapsed. Selecting one opens its songs right below it (one artist
+ * at a time); selecting it again or pressing Back closes it.
+ */
+@Composable
+private fun ArtistList(vm: KaraokeViewModel) {
+    val groups = remember(vm.library) { groupByArtist(vm.library) }
+    var expanded by rememberSaveable { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
+
+    BackHandler(enabled = expanded != null) { expanded = null }
+    LaunchedEffect(expanded) {
+        val index = groups.indexOfFirst { it.first == expanded }
+        if (index >= 0) listState.animateScrollToItem(index)
+    }
+
+    LazyColumn(
+        state = listState,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
+        for ((artist, songs) in groups) {
+            val open = artist == expanded
+            item(key = "artist:$artist") {
+                CompactRow(onClick = { expanded = if (open) null else artist }) {
+                    Text(
+                        (if (open) "▾  " else "▸  ") + artist,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (open) Pink else Color.Unspecified,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        if (songs.size == 1) "1 song" else "${songs.size} songs",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.5f),
+                    )
+                }
+            }
+            if (open) {
+                items(songs, key = { it.id }) { song ->
+                    CompactRow(onClick = { vm.play(song) }, indent = 28.dp) {
+                        Text(
+                            song.title,
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (song.hasLyricsFile) Text("♪  ", color = Gold, style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            formatTime(song.durationMs).takeUnless { song.durationMs == null } ?: "",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White.copy(alpha = 0.5f),
+                        )
                     }
                 }
             }
         }
+    }
+}
+
+/** A slim, focusable list row (about 40dp tall) for the TV remote. */
+@Composable
+private fun CompactRow(
+    onClick: () -> Unit,
+    indent: Dp = 0.dp,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(start = indent),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.White.copy(alpha = 0.04f),
+            contentColor = Color.White,
+            focusedContainerColor = Pink.copy(alpha = 0.35f),
+            focusedContentColor = Color.White,
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.01f),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content,
+        )
     }
 }
 
