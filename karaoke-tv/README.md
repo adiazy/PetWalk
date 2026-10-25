@@ -74,6 +74,19 @@ cd karaoke-tv
 Or open the `karaoke-tv` folder in Android Studio and run it on an **Android TV emulator**
 (Device Manager → Television → 1080p) or a real TV.
 
+### Install on the TV with one command (Windows)
+
+From the `karaoke-tv` folder in PowerShell:
+
+```powershell
+.\install-tv.ps1                    # TV at 192.168.1.69
+.\install-tv.ps1 -Tv 192.168.1.50   # another TV
+```
+
+It connects to the TV, builds the app, installs it and opens it, and tells you what to do if a step fails.
+If Windows says running scripts is disabled, run it as
+`powershell -ExecutionPolicy Bypass -File .\install-tv.ps1` instead.
+
 ### Install on a real Android TV / Google TV
 
 1. On the TV: Settings → System → About → click **Android TV OS build** 7 times to enable developer options.
