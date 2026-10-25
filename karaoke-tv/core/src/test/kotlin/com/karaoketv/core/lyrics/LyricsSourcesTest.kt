@@ -16,7 +16,7 @@ class LyricsSourcesTest {
     }
 
     @Test
-    fun lrcLibUsesGetThenParsesSyncedLyrics() {
+    fun lrcLibUsesCachedGetThenParsesSyncedLyrics() {
         val urls = mutableListOf<String>()
         val client = LrcLibClient(http = { url, headers ->
             urls += url
@@ -26,18 +26,18 @@ class LyricsSourcesTest {
         val lyrics = assertNotNull(client.find(LyricsQuery("My Song", "The Band", durationMs = 200_400)))
         assertTrue(lyrics.synced)
         assertEquals("Hi", lyrics.lines.single().text)
-        assertEquals("https://lrclib.net/api/get?track_name=My%20Song&artist_name=The%20Band&duration=200", urls.single())
+        assertEquals("https://lrclib.net/api/get-cached?track_name=My%20Song&artist_name=The%20Band&duration=200", urls.single())
     }
 
     @Test
     fun lrcLibFallsBackToSearchPreferringSyncedAndCloseDuration() {
         val client = LrcLibClient(http = { url, _ ->
             when {
-                "/api/get" in url -> 404 to """{"code":404}"""
+                "/api/get-cached" in url -> 404 to """{"code":404}"""
                 else -> 200 to """[
-                    {"id":1,"duration":100,"plainLyrics":"plain"},
-                    {"id":2,"duration":300,"syncedLyrics":"[00:01.00]wrong length"},
-                    {"id":3,"duration":181,"syncedLyrics":"[00:01.00]right"}
+                    {"id":1,"trackName":"t","artistName":"a","duration":100,"plainLyrics":"plain"},
+                    {"id":2,"trackName":"t","artistName":"a","duration":300,"syncedLyrics":"[00:01.00]wrong length"},
+                    {"id":3,"trackName":"t","artistName":"a","duration":181,"syncedLyrics":"[00:01.00]right"}
                 ]"""
             }
         })
@@ -52,12 +52,13 @@ class LyricsSourcesTest {
             urls += url
             when {
                 "/api/get" in url -> 404 to "{}"
-                "q=" in url -> 200 to """[{"id":9,"syncedLyrics":"[00:01.00]found"}]"""
+                "q=" in url -> 200 to """[{"id":9,"trackName":"Song","artistName":"Band","syncedLyrics":"[00:01.00]found"}]"""
                 else -> 200 to "[]"
             }
         })
         assertEquals("found", client.find(LyricsQuery("Song", "Band"))?.lines?.single()?.text)
         assertEquals("https://lrclib.net/api/search?q=Band%20Song", urls.last())
+        assertEquals(2, urls.size)
     }
 
     @Test
@@ -79,13 +80,13 @@ class LyricsSourcesTest {
         val client = LrcLibClient(
             http = { _, _ ->
                 calls++
-                if (calls < 3) 503 to "busy" else 200 to """[{"id":1,"syncedLyrics":"[00:01.00]ok"}]"""
+                if (calls < 3) 503 to "busy" else 200 to """[{"id":1,"trackName":"Song","syncedLyrics":"[00:01.00]ok"}]"""
             },
             sleep = { waits += it },
         )
         assertEquals("ok", client.find(LyricsQuery("Song"))?.lines?.single()?.text)
         assertEquals(3, calls)
-        assertEquals(listOf(1_000L, 2_500L), waits)
+        assertEquals(listOf(700L, 2_000L), waits)
     }
 
     @Test
@@ -111,6 +112,53 @@ class LyricsSourcesTest {
         ))
         val report = repo.search(LyricsQuery("Song", "Band"))
         assertEquals("lyrics.ovh", report.lyrics?.source)
+    }
+
+    @Test
+    fun cleansTitlesForMatching() {
+        assertEquals("Hey Ya!", LyricsQuery("Hey Ya! - Radio Edit").cleaned().title)
+        assertEquals("Come Together", LyricsQuery("Come Together - Remastered 2009").cleaned().title)
+        assertEquals("Stay", LyricsQuery("Stay (feat. Justin Bieber)", "The Kid LAROI").cleaned().title)
+        assertEquals("Lose Yourself", LyricsQuery("Lose Yourself [Explicit]").cleaned().title)
+        assertEquals("Shallow", LyricsQuery("Shallow (Radio Version)").cleaned().title)
+        assertEquals("Remix Song (Remix)", LyricsQuery("Remix Song (Remix)").cleaned().title)
+        assertEquals("Drake", LyricsQuery("x", "Drake feat. Rihanna").cleaned().artist)
+        assertEquals("Simon", LyricsQuery("x", "Simon & Garfunkel").primaryArtist())
+        assertNull(LyricsQuery("x", "Adele").primaryArtist())
+    }
+
+    @Test
+    fun freeTextResultsMustBeTheRightSong() {
+        val client = LrcLibClient(http = { url, _ ->
+            when {
+                "q=" in url -> 200 to """[
+                    {"id":1,"trackName":"Yesterday Once More","artistName":"Carpenters","syncedLyrics":"[00:01.00]wrong"},
+                    {"id":2,"trackName":"Yesterday","artistName":"Some Cover Band","syncedLyrics":"[00:01.00]cover"},
+                    {"id":3,"trackName":"Yesterday - Remastered 2009","artistName":"The Beatles","syncedLyrics":"[00:01.00]right"}
+                ]"""
+                else -> 200 to "[]"
+            }
+        }, sleep = {})
+        assertEquals("right", client.find(LyricsQuery("Yesterday", "Beatles"))?.lines?.single()?.text)
+    }
+
+    @Test
+    fun onlineSourcesRunAtTheSameTime() {
+        val slowBackup = LyricsProvider { Thread.sleep(400); Lyrics(listOf(LyricLine(0, "plain")), false, "backup") }
+        val slowMain = LyricsProvider { Thread.sleep(400); null }
+        val started = System.currentTimeMillis()
+        val report = LyricsRepository(emptyList(), online = listOf(slowMain, slowBackup)).search(LyricsQuery("t", "a"))
+        val took = System.currentTimeMillis() - started
+        assertEquals("backup", report.lyrics?.source)
+        assertTrue(took < 750, "took $took ms")
+    }
+
+    @Test
+    fun localOnlySearchSkipsOnline() {
+        var asked = false
+        val repo = LyricsRepository(emptyList(), online = listOf(LyricsProvider { asked = true; null }))
+        assertNull(repo.search(LyricsQuery("t"), includeOnline = false).lyrics)
+        assertEquals(false, asked)
     }
 
     @Test

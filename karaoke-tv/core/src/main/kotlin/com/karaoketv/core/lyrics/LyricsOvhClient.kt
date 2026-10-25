@@ -12,7 +12,7 @@ import java.net.URLEncoder
  */
 class LyricsOvhClient(
     private val baseUrl: String = "https://api.lyrics.ovh",
-    private val http: HttpGet = UrlConnectionHttpGet(timeoutMs = 8_000),
+    private val http: HttpGet = UrlConnectionHttpGet(timeoutMs = 5_000),
 ) : LyricsProvider {
     private val json = Json { ignoreUnknownKeys = true }
 

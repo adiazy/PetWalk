@@ -45,10 +45,13 @@ import com.karaoketv.media.StopwatchClock
 import com.karaoketv.media.VocalRemover
 import com.karaoketv.ui.Appearance
 import com.karaoketv.ui.AppearanceStore
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 sealed interface LyricsState {
     data object Loading : LyricsState
@@ -74,13 +77,9 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     // Synced lyrics found online are downloaded into the shared lyrics folder (see saveLyrics).
     private val shareLyrics = SmbSidecarLrcProvider({ smb }, { lyricsDir })
     private val lyricsRepository = LyricsRepository(
-        listOf(
-            SidecarLrcProvider(),
-            shareLyrics,
-            lrcLib,
-            // Backup when LRCLIB is busy or has nothing (plain text only).
-            LyricsOvhClient(),
-        ),
+        providers = listOf(SidecarLrcProvider(), shareLyrics),
+        // Asked at the same time; lyrics.ovh is a plain-text backup for when LRCLIB has nothing.
+        online = listOf(lrcLib, LyricsOvhClient()),
     )
 
     private val appearanceStore = AppearanceStore(app)
@@ -123,6 +122,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     private var artworkJob: Job? = null
 
     private var lyricsJob: Job? = null
+    private var playerReady: CompletableDeferred<Unit>? = null
 
     init {
         player.addListener(object : Player.Listener {
@@ -139,18 +139,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 }
+            }
 
-                // Streams and network files often only reveal their real title/artist tags once
-                // playing. Retry with them if the file-name guess found nothing or had no artist.
-                val song = nowPlaying ?: return
-                val title = mediaMetadata.title?.toString()?.takeIf { it.isNotBlank() } ?: return
-                val artist = mediaMetadata.artist?.toString()?.takeIf { it.isNotBlank() }
-                val worthRetrying = lyrics is LyricsState.NotFound || (song.artist == null && artist != null)
-                if (worthRetrying && (song.title != title || song.artist != artist)) {
-                    val updated = song.copy(title = title, artist = artist ?: song.artist)
-                    nowPlaying = updated
-                    loadLyrics(updated)
-                }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                // Ready means the file's tags and length are known: the best moment to search.
+                if (playbackState == Player.STATE_READY) playerReady?.complete(Unit)
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -289,6 +282,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 1. Lyrics files (lyrics folder, next to the song) right away; no network needed.
+     * 2. Otherwise wait until the player has read the file's tags and length (at most
+     *    [TAGS_WAIT_MS]) and search online with those, which match far better than file names.
+     */
     private fun loadLyrics(song: Song) {
         lyricsJob?.cancel()
         if (song.title.isBlank()) {
@@ -296,14 +294,51 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         lyrics = LyricsState.Loading
+        val ready = CompletableDeferred<Unit>().also { playerReady = it }
+        if (song.uri == null || player.playbackState == Player.STATE_READY) ready.complete(Unit)
+
         lyricsJob = viewModelScope.launch {
+            val started = System.currentTimeMillis()
+            val local = withContext(Dispatchers.IO) { lyricsRepository.search(song.toQuery(), includeOnline = false) }
+            val fromFile = local.lyrics
+            if (fromFile != null) {
+                Log.i(TAG, "Lyrics for ${song.title} from ${fromFile.source} in ${System.currentTimeMillis() - started} ms")
+                lyrics = LyricsState.Found(fromFile)
+                return@launch
+            }
+
+            withTimeoutOrNull(TAGS_WAIT_MS) { ready.await() }
+            val tagged = withTags(song)
+            if (tagged != song && nowPlaying?.id == song.id) nowPlaying = tagged
+
             val report = withContext(Dispatchers.IO) {
-                lyricsRepository.search(song.toQuery()).also { r -> r.lyrics?.let { saveLyrics(song, it) } }
+                lyricsRepository.search(tagged.toQuery()).also { r ->
+                    // Save under the library's name for the song so the next lookup finds it instantly.
+                    r.lyrics?.let { saveLyrics(song, it) }
+                }
             }
             val searched = listOfNotNull(report.query.title, report.query.artist?.let { "by $it" }).joinToString(" ")
-            Log.i(TAG, "Lyrics for \"$searched\": ${report.lyrics?.source ?: "not found"} ${report.problems}")
+            Log.i(
+                TAG,
+                "Lyrics for \"$searched\": ${report.lyrics?.source ?: "not found"} in " +
+                    "${System.currentTimeMillis() - started} ms ${report.problems}",
+            )
             lyrics = report.lyrics?.let { LyricsState.Found(it) } ?: LyricsState.NotFound(searched, report.problems)
         }
+    }
+
+    /** The song with title/artist/album/length from the file's tags where the player found them. */
+    private fun withTags(song: Song): Song {
+        if (song.uri == null) return song
+        val tags = player.mediaMetadata
+        fun clean(c: CharSequence?) = c?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
+        return song.copy(
+            title = clean(tags.title) ?: song.title,
+            artist = clean(tags.artist) ?: clean(tags.albumArtist) ?: song.artist,
+            album = clean(tags.albumTitle) ?: song.album,
+            durationMs = duration ?: song.durationMs,
+        )
     }
 
     private fun loadArtwork(song: Song) {
@@ -396,19 +431,38 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             for ((i, song) in todo.withIndex()) {
                 lyricsDownload = "Downloading lyrics ${i + 1}/${todo.size}: ${song.title}  (saved $saved)"
                 val ok = withContext(Dispatchers.IO) {
-                    val found = runCatching { lyricsRepository.find(song.toQuery()) }.getOrNull()
+                    // Tags inside the file (title, artist, length) match far better than file names.
+                    val tagged = tagsFromShare(song)
+                    val found = runCatching { lyricsRepository.find(tagged.toQuery()) }.getOrNull()
                     if (found == null || !found.synced) notFound++
                     found != null && saveLyrics(song, found)
                 }
                 if (ok) saved++
+                delay(BULK_PAUSE_MS) // be gentle with the free lyrics service
             }
             lyricsDownload = "Done: saved $saved lyrics files" +
                 (if (notFound > 0) "; no synced lyrics found for $notFound songs" else "") + "."
         }
     }
 
+    /** Blocking. The song with tags read from its file on the share, if it has any. */
+    private fun tagsFromShare(song: Song): Song {
+        val uri = song.uri?.takeIf { it.scheme == "smb" } ?: return song
+        val connection = smb ?: return song
+        val path = connection.pathOf(uri) ?: return song
+        val tags = runCatching { connection.readTags(path) }.getOrNull() ?: return song
+        return song.copy(
+            title = tags.title,
+            artist = tags.artist ?: song.artist,
+            album = tags.album ?: song.album,
+            durationMs = tags.durationMs ?: song.durationMs,
+        )
+    }
+
     private companion object {
         const val TAG = "KaraokeTV"
+        const val TAGS_WAIT_MS = 2_500L
+        const val BULK_PAUSE_MS = 300L
     }
 
     fun togglePlay() {

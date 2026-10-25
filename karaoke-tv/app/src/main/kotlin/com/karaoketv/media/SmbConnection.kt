@@ -1,5 +1,7 @@
 package com.karaoketv.media
 
+import android.media.MediaDataSource
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.msfscc.FileAttributes
@@ -104,6 +106,44 @@ class SmbConnection(
         val disk = share()
         if (!disk.folderExists(dir)) return emptySet()
         return disk.list(dir).mapTo(HashSet()) { it.fileName.lowercase() }
+    }
+
+    /**
+     * Reads title/artist/album/length tags from an audio file on the share without downloading
+     * it (only the parts the tag reader asks for are fetched). Null if there are none.
+     */
+    fun readTags(path: String): Song? {
+        val file = openRead(path)
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(SmbMediaDataSource(file))
+            fun tag(key: Int) = retriever.extractMetadata(key)?.trim()?.takeIf { it.isNotEmpty() }
+            val title = tag(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: return null
+            return Song(
+                id = "smb:$path",
+                title = title,
+                artist = tag(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: tag(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST),
+                album = tag(MediaMetadataRetriever.METADATA_KEY_ALBUM),
+                durationMs = tag(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull(),
+            )
+        } finally {
+            runCatching { retriever.release() }
+            runCatching { file.close() }
+        }
+    }
+
+    private class SmbMediaDataSource(private val file: SmbFile) : MediaDataSource() {
+        private val length = file.fileInformation.standardInformation.endOfFile
+
+        override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+            if (position >= length || size <= 0) return -1
+            val read = file.read(buffer, position, offset, minOf(size.toLong(), length - position).toInt())
+            return if (read <= 0) -1 else read
+        }
+
+        override fun getSize() = length
+
+        override fun close() = Unit
     }
 
     /** Reads a small file (e.g. cover.jpg), or null if it's missing or larger than [maxBytes]. */
