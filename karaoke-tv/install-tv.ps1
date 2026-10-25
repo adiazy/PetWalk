@@ -45,15 +45,20 @@ $metadata = Join-Path $PSScriptRoot "app\build\outputs\apk\debug\output-metadata
 $package = (Get-Content $metadata -Raw | ConvertFrom-Json).applicationId
 Write-Host "4/4 Opening Karaoke TV ($package) ..." -ForegroundColor Cyan
 
+# TVs with profiles (Google TV) install into the active profile, e.g. user 10, while plain
+# adb shell commands default to user 0, so always target the current profile.
+$user = ((adb -s $device shell am get-current-user 2>&1) -join "").Trim()
+if ($user -notmatch '^\d+$') { $user = "0" }
+
 # Ask the TV which screen its launcher opens for this app, then start that one.
 $activity = $null
 foreach ($category in "android.intent.category.LEANBACK_LAUNCHER", "android.intent.category.LAUNCHER") {
-    $resolved = (adb -s $device shell cmd package resolve-activity --brief -c $category $package 2>&1 |
+    $resolved = (adb -s $device shell cmd package resolve-activity --brief --user $user -c $category $package 2>&1 |
         Select-Object -Last 1).ToString().Trim()
     if ($resolved -match "/") { $activity = $resolved; break }
 }
 if (-not $activity) {
-    Write-Host "The TV has $package installed but found no screen to open. Diagnostics:" -ForegroundColor Red
+    Write-Host "The TV has $package installed but found no screen to open for profile $user. Diagnostics:" -ForegroundColor Red
 
     Write-Host "`n--- Manifest on this PC ---" -ForegroundColor Yellow
     Select-String -Path (Join-Path $PSScriptRoot "app\src\main\AndroidManifest.xml") -Pattern "activity|category|<application" |
@@ -78,7 +83,7 @@ if (-not $activity) {
     exit 1
 }
 
-$start = (adb -s $device shell am start -n $activity 2>&1) -join "`n"
+$start = (adb -s $device shell am start --user $user -n $activity 2>&1) -join "`n"
 Write-Host $start
 if ($start -match "Error") {
     Write-Host "Couldn't open $activity. Copy the message above and send it to Claude." -ForegroundColor Red
