@@ -21,15 +21,22 @@ import androidx.media3.exoplayer.RenderersFactory
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.karaoketv.core.library.SmbLocation
 import com.karaoketv.core.lyrics.CachedLyricsProvider
 import com.karaoketv.core.lyrics.LrcLibClient
 import com.karaoketv.core.lyrics.LrcLibTrack
 import com.karaoketv.core.lyrics.Lyrics
 import com.karaoketv.core.lyrics.LyricsRepository
 import com.karaoketv.core.lyrics.SidecarLrcProvider
+import com.karaoketv.media.KaraokeDataSourceFactory
 import com.karaoketv.media.LocalLibrary
+import com.karaoketv.media.NetworkFolder
+import com.karaoketv.media.NetworkFolderStore
 import com.karaoketv.media.PlaybackClock
 import com.karaoketv.media.PlayerClock
+import com.karaoketv.media.SmbConnection
+import com.karaoketv.media.SmbSidecarLrcProvider
 import com.karaoketv.media.Song
 import com.karaoketv.media.StopwatchClock
 import com.karaoketv.media.VocalRemover
@@ -49,10 +56,18 @@ sealed interface LyricsState {
 
 @OptIn(UnstableApi::class)
 class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
+    private val folderStore = NetworkFolderStore(app)
+    var networkFolder by mutableStateOf(folderStore.load())
+        private set
+
+    @Volatile
+    private var smb: SmbConnection? = connect(networkFolder)
+
     private val lrcLib = LrcLibClient()
     private val lyricsRepository = LyricsRepository(
         listOf(
             SidecarLrcProvider(),
+            SmbSidecarLrcProvider { smb },
             CachedLyricsProvider(File(app.filesDir, "lyrics"), lrcLib),
         ),
     )
@@ -67,6 +82,8 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     var library by mutableStateOf<List<Song>>(emptyList())
         private set
     var libraryLoading by mutableStateOf(false)
+        private set
+    var libraryError by mutableStateOf<String?>(null)
         private set
 
     var searchResults by mutableStateOf<List<LrcLibTrack>>(emptyList())
@@ -93,11 +110,14 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     init {
         player.addListener(object : Player.Listener {
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-                // Streams (internet radio, NAS links) often only reveal title/artist once playing.
+                // Streams and network files often only reveal their real title/artist tags once
+                // playing. Retry with them if the file-name guess found nothing or had no artist.
                 val song = nowPlaying ?: return
                 val title = mediaMetadata.title?.toString()?.takeIf { it.isNotBlank() } ?: return
-                if (lyrics == LyricsState.NotFound && song.title != title) {
-                    val updated = song.copy(title = title, artist = mediaMetadata.artist?.toString() ?: song.artist)
+                val artist = mediaMetadata.artist?.toString()?.takeIf { it.isNotBlank() }
+                val worthRetrying = lyrics == LyricsState.NotFound || (song.artist == null && artist != null)
+                if (worthRetrying && (song.title != title || song.artist != artist)) {
+                    val updated = song.copy(title = title, artist = artist ?: song.artist)
                     nowPlaying = updated
                     loadLyrics(updated)
                 }
@@ -114,16 +134,55 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         appearanceStore.save(appearance)
     }
 
+    private var libraryRequested = false
+
+    /** First visit to "My music" scans; later visits reuse the list until Refresh. */
+    fun loadLibraryIfNeeded() {
+        if (libraryRequested) return
+        libraryRequested = true
+        loadLibrary()
+    }
+
     fun loadLibrary() {
         if (libraryLoading) return
         libraryLoading = true
+        libraryError = null
+        val folder = networkFolder
+        val connection = smb
         viewModelScope.launch {
-            library = withContext(Dispatchers.IO) {
-                runCatching { LocalLibrary.query(getApplication()) }.getOrDefault(emptyList())
+            val (songs, error) = withContext(Dispatchers.IO) {
+                val network = connection?.let { runCatching { it.scan() } }
+                val device = if (folder.includeDeviceMusic) {
+                    runCatching { LocalLibrary.query(getApplication()) }.getOrDefault(emptyList())
+                } else {
+                    emptyList()
+                }
+                val all = (network?.getOrNull().orEmpty() + device).sortedBy { it.title.lowercase() }
+                val problem = when {
+                    connection == null -> "\"${folder.path}\" isn't a valid network folder (use \\\\server\\share\\folder)"
+                    network?.isFailure == true ->
+                        "Couldn't open ${folder.path}: ${network.exceptionOrNull()?.localizedMessage ?: "unknown error"}"
+                    else -> null
+                }
+                all to problem
             }
+            library = songs
+            libraryError = error
             libraryLoading = false
         }
     }
+
+    fun updateNetworkFolder(folder: NetworkFolder) {
+        networkFolder = folder
+        folderStore.save(folder)
+        val old = smb
+        smb = connect(folder)
+        viewModelScope.launch(Dispatchers.IO) { runCatching { old?.close() } }
+        loadLibrary()
+    }
+
+    private fun connect(folder: NetworkFolder): SmbConnection? =
+        SmbLocation.parse(folder.path)?.let { SmbConnection(it, folder.username, folder.password) }
 
     fun searchOnline(text: String) {
         if (text.isBlank()) return
@@ -212,6 +271,8 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         player.release()
+        val connection = smb
+        Thread { runCatching { connection?.close() } }.start()
     }
 
     private fun buildPlayer(app: Application): ExoPlayer {
@@ -223,14 +284,17 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                 MediaCodecAudioRenderer(app, MediaCodecSelector.DEFAULT, handler, audioListener, sink),
             )
         }
-        return ExoPlayer.Builder(app, renderers).build().apply {
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .build(),
-                true,
-            )
-        }
+        return ExoPlayer.Builder(app, renderers)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(KaraokeDataSourceFactory(app) { smb }))
+            .build()
+            .apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(C.USAGE_MEDIA)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                        .build(),
+                    true,
+                )
+            }
     }
 }

@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.karaoketv"
-        minSdk = 23
+        minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
@@ -30,6 +30,19 @@ android {
     kotlinOptions { jvmTarget = "17" }
 
     buildFeatures { compose = true }
+
+    packaging {
+        resources {
+            // Duplicate license/manifest files from the SMB client and BouncyCastle jars.
+            excludes += setOf(
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*",
+                "META-INF/INDEX.LIST",
+                "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -47,4 +60,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Windows/NAS network shares (SMB 2/3) for "My music".
+    implementation("com.hierynomus:smbj:0.13.0")
 }

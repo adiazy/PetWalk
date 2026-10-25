@@ -34,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -49,6 +50,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,6 +61,7 @@ import androidx.tv.material3.Card
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.karaoketv.KaraokeViewModel
+import com.karaoketv.media.NetworkFolder
 
 private enum class Tab(val label: String) {
     Library("My music"),
@@ -107,30 +111,47 @@ private fun LibraryPane(vm: KaraokeViewModel) {
     } else {
         Manifest.permission.READ_EXTERNAL_STORAGE
     }
-    var denied by remember { mutableStateOf(false) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) vm.loadLibrary() else denied = true
+    // Network music doesn't need the storage permission, so load either way.
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        vm.loadLibraryIfNeeded()
     }
     LaunchedEffect(Unit) {
-        if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
-            vm.loadLibrary()
-        } else {
-            launcher.launch(permission)
-        }
+        val needsPermission = vm.networkFolder.includeDeviceMusic &&
+            ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
+        if (needsPermission) launcher.launch(permission) else vm.loadLibraryIfNeeded()
     }
+    var editing by remember { mutableStateOf(false) }
 
     Column {
-        Text("Songs on this TV and USB drives", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "Lyrics come from a .lrc file next to the song, or are fetched from LRCLIB.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.6f),
-        )
-        Spacer(Modifier.height(16.dp))
+        Text("My music", style = MaterialTheme.typography.titleLarge)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "📁 ${vm.networkFolder.path}" + if (vm.networkFolder.includeDeviceMusic) "  + this TV" else "",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.7f),
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Button(onClick = { editing = !editing }) { Text(if (editing) "Cancel" else "Change folder") }
+            Spacer(Modifier.width(12.dp))
+            Button(onClick = vm::loadLibrary) { Text("Refresh") }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (editing) {
+            FolderEditor(vm) { editing = false }
+            return@Column
+        }
+        vm.libraryError?.let {
+            Text(it, color = Pink, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(8.dp))
+        }
         when {
-            denied -> Text("Storage permission is needed to list your music.")
-            vm.libraryLoading -> Text("Scanning…")
-            vm.library.isEmpty() -> Text("No music found. Copy MP3/FLAC/M4A files (and optional .lrc files) to the TV or a USB drive.")
+            vm.libraryLoading -> Text("Scanning your music…")
+            vm.library.isEmpty() -> Text(
+                "No music found. Put MP3/FLAC/M4A files (and optional .lrc lyrics with the same name) " +
+                    "in the network folder, then press Refresh.",
+            )
             else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(260.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -138,11 +159,42 @@ private fun LibraryPane(vm: KaraokeViewModel) {
                 contentPadding = PaddingValues(bottom = 24.dp),
             ) {
                 items(vm.library, key = { it.id }) { song ->
-                    SongCard(song.title, song.artist ?: "Unknown artist", formatTime(song.durationMs)) {
+                    val where = if (song.uri?.scheme == "smb") "Network" else "This TV"
+                    SongCard(song.title, song.artist ?: "Unknown artist", "$where  ${formatTime(song.durationMs)}") {
                         vm.play(song)
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
+    val current = vm.networkFolder
+    var path by remember { mutableStateOf(current.path) }
+    var user by remember { mutableStateOf(current.username) }
+    var password by remember { mutableStateOf(current.password) }
+    var includeDevice by remember { mutableStateOf(current.includeDeviceMusic) }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Network folder (Windows share or NAS)", style = MaterialTheme.typography.titleMedium)
+        TvTextField(path, { path = it }, """\\192.168.1.99\Public\Shared Music""", Modifier.fillMaxWidth())
+        Text(
+            "Leave the login empty for public/guest shares. Use DOMAIN\\user if needed.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White.copy(alpha = 0.6f),
+        )
+        TvTextField(user, { user = it }, "Username (optional)", Modifier.fillMaxWidth())
+        TvTextField(password, { password = it }, "Password (optional)", Modifier.fillMaxWidth(), password = true)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = { includeDevice = !includeDevice }) {
+                Text(if (includeDevice) "✓ Also show music on this TV" else "Also show music on this TV")
+            }
+            Button(onClick = { path = NetworkFolder.DEFAULT_PATH }) { Text("Use default") }
+            Button(onClick = {
+                vm.updateNetworkFolder(NetworkFolder(path.trim(), user.trim(), password, includeDevice))
+                onDone()
+            }) { Text("Save & scan") }
         }
     }
 }
@@ -158,7 +210,7 @@ private fun OnlinePane(vm: KaraokeViewModel) {
             color = Color.White.copy(alpha = 0.6f),
         )
         Spacer(Modifier.height(16.dp))
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             TvTextField(query, { query = it }, "Song or artist", Modifier.weight(1f)) { vm.searchOnline(query) }
             Spacer(Modifier.width(12.dp))
             Button(onClick = { vm.searchOnline(query) }) { Text(if (vm.searching) "Searching…" else "Search") }
@@ -219,6 +271,7 @@ private fun TvTextField(
     modifier: Modifier = Modifier,
     keyboardType: KeyboardType = KeyboardType.Text,
     onSubmit: () -> Unit = {},
+    password: Boolean = false,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     var focused by remember { mutableStateOf(false) }
@@ -228,7 +281,11 @@ private fun TvTextField(
         singleLine = true,
         textStyle = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Medium),
         cursorBrush = SolidColor(Pink),
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Done),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = if (password) KeyboardType.Password else keyboardType,
+            imeAction = ImeAction.Done,
+        ),
+        visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); onSubmit() }),
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }

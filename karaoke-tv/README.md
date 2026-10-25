@@ -6,7 +6,8 @@ An Android TV karaoke app: plays your music with time-synced, highlighted lyrics
 
 | Source | What it gives you |
 | --- | --- |
-| **My music**: songs on the TV's storage and USB drives | Audio + lyrics |
+| **My music → network folder**: a Windows share or NAS, default `\\192.168.1.99\Public\Shared Music` (subfolders included) | Audio streamed straight from the share, plus `.lrc` lyrics next to each song |
+| **My music → this TV**: songs on the TV's storage and USB drives | Audio + lyrics |
 | **Sidecar `.lrc` files**: `Song.mp3` + `Song.lrc` in the same folder | Synced lyrics, offline |
 | **[LRCLIB](https://lrclib.net)**: free, open lyrics database, no API key | Synced lyrics for millions of songs, cached on the device after the first play |
 | **Play from URL**: any direct MP3/AAC/FLAC/HLS link (NAS, Jellyfin/Plex direct links, radio) | Audio; lyrics looked up from the title you enter or from the stream's metadata |
@@ -22,6 +23,19 @@ audio, so they aren't built in. Use lyrics-only mode with them instead.
 - **Vocal reducer** (center-channel cancellation that keeps the bass) for songs that don't have a karaoke version
 - Lyrics sync adjustment in ±0.25 s steps
 - Navigable with the D-pad; supports remote media keys (play/pause, fast-forward, rewind)
+
+## Network music folder
+
+**My music** scans `\\192.168.1.99\Public\Shared Music` by default. Use **Change folder** to set another
+path (`\\server\share\folder` or `smb://server/share/folder`) and, if the share isn't public, a
+username and password (`DOMAIN\user` works too). You can also hide music stored on the TV itself.
+
+- Songs stream directly from the share, so seeking works and nothing is copied to the TV.
+- Titles and artists are guessed from file names like `01 - Artist - Title.mp3`, then corrected
+  from the song's tags once it starts playing.
+- Lyrics: `Song.lrc` next to `Song.mp3` on the share is used first, then LRCLIB.
+- Needs SMB 2 or newer, which is the default on Windows 10/11 and current NAS firmware.
+  The login is saved on the TV in plain app storage.
 
 ## Customizing the look
 
