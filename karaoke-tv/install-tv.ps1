@@ -40,6 +40,28 @@ if ($result -notmatch "Success") {
     exit 1
 }
 
-Write-Host "4/4 Opening Karaoke TV ..." -ForegroundColor Cyan
-adb -s $device shell am start -n com.karaoketv/.MainActivity | Out-Host
-Write-Host "Done! Karaoke TV should now be on the TV screen." -ForegroundColor Green
+# Use the app ID the build actually produced (it may differ from com.karaoketv).
+$metadata = Join-Path $PSScriptRoot "app\build\outputs\apk\debug\output-metadata.json"
+$package = (Get-Content $metadata -Raw | ConvertFrom-Json).applicationId
+Write-Host "4/4 Opening Karaoke TV ($package) ..." -ForegroundColor Cyan
+
+# Ask the TV which screen its launcher opens for this app, then start that one.
+$activity = $null
+foreach ($category in "android.intent.category.LEANBACK_LAUNCHER", "android.intent.category.LAUNCHER") {
+    $resolved = (adb -s $device shell cmd package resolve-activity --brief -c $category $package 2>&1 |
+        Select-Object -Last 1).ToString().Trim()
+    if ($resolved -match "/") { $activity = $resolved; break }
+}
+if (-not $activity) {
+    Write-Host "The TV has $package installed but found no screen to open." -ForegroundColor Red
+    Write-Host "Send Claude the output of:  findstr /n /i ""activity category"" app\src\main\AndroidManifest.xml" -ForegroundColor Yellow
+    exit 1
+}
+
+$start = (adb -s $device shell am start -n $activity 2>&1) -join "`n"
+Write-Host $start
+if ($start -match "Error") {
+    Write-Host "Couldn't open $activity. Copy the message above and send it to Claude." -ForegroundColor Red
+    exit 1
+}
+Write-Host "Done! Karaoke TV is open on the TV." -ForegroundColor Green
