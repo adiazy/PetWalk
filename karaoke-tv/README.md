@@ -23,6 +23,28 @@ audio, so they aren't built in. Use lyrics-only mode with them instead.
 - Lyrics sync adjustment in ±0.25 s steps
 - Navigable with the D-pad; supports remote media keys (play/pause, fast-forward, rewind)
 
+## Customizing the look
+
+Open **Look & feel** on the home screen to choose:
+
+- **Background:** Purple night, Ocean, Sunset, Forest, Neon club, Plain black
+- **Font:** Modern, Light, Classic serif, Typewriter, Handwritten
+- **Lyrics size:** Small to Huge
+- **Highlight color:** the color that sweeps across the line being sung
+
+A preview shows changes live, and your choices are saved on the TV.
+
+To add your own options, edit `app/src/main/kotlin/com/karaoketv/ui/Appearance.kt`:
+
+- New background: add an entry to `BackgroundStyle` with its gradient colors, e.g.
+  `Galaxy("Galaxy", listOf(Color(0xFF000814), Color(0xFF3A0CA3))),`
+- Custom font file: put e.g. `myfont.ttf` in `app/src/main/res/font/` and add
+  `MyFont("My font", FontFamily(Font(R.font.myfont)), FontWeight.Normal),` to `FontChoice`
+  (imports: `androidx.compose.ui.text.font.Font`, `com.karaoketv.R`).
+- New highlight: add an entry to `HighlightColor`.
+
+The new options show up in the Look & feel screen automatically.
+
 ## Build and run
 
 Requirements: Android Studio (Ladybug or newer) or the Android SDK command-line tools with platform 35, and JDK 17+.

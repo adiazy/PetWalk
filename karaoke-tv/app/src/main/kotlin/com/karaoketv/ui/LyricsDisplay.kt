@@ -23,7 +23,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -39,6 +38,8 @@ fun LyricsDisplay(lyrics: Lyrics, positionMs: Long, durationMs: Long?, modifier:
 
 @Composable
 private fun SyncedLyrics(lyrics: Lyrics, positionMs: Long, durationMs: Long?, modifier: Modifier) {
+    val look = LocalAppearance.current
+    val scale = look.textSize.scale
     val current = lyrics.lineIndexAt(positionMs)
     Column(
         modifier.fillMaxSize().padding(horizontal = 64.dp),
@@ -49,18 +50,19 @@ private fun SyncedLyrics(lyrics: Lyrics, positionMs: Long, durationMs: Long?, mo
         if (current == -1 && firstStart - positionMs in 1..COUNTDOWN_MS) {
             // Get-ready dots before the first line, like a real karaoke machine.
             val dots = ((firstStart - positionMs) / 1000 + 1).toInt()
-            Text("● ".repeat(dots).trim(), color = Gold, fontSize = 40.sp)
+            Text("● ".repeat(dots).trim(), color = look.highlight.color, fontSize = 40.sp * scale)
         }
         for (offset in -1..2) {
             val i = current + offset
             val line = lyrics.lines.getOrNull(i)
             val text = line?.text?.ifBlank { "♪" } ?: ""
             if (offset == 0 && line != null) {
-                HighlightedLine(text, lyrics.progressAt(i, positionMs, durationMs), 56.sp)
+                HighlightedLine(text, lyrics.progressAt(i, positionMs, durationMs), 56.sp * scale)
             } else {
                 Text(
                     text,
-                    fontSize = if (offset < 0) 30.sp else 38.sp,
+                    fontSize = (if (offset < 0) 30.sp else 38.sp) * scale,
+                    fontFamily = look.font.family,
                     color = Color.White.copy(alpha = if (offset < 0) 0.35f else 0.7f),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(vertical = 8.dp),
@@ -70,17 +72,26 @@ private fun SyncedLyrics(lyrics: Lyrics, positionMs: Long, durationMs: Long?, mo
     }
 }
 
-/** White text with a gold fill sweeping across it, line by line for wrapped text. */
+/** White text with a colored fill sweeping across it, line by line for wrapped text. */
 @Composable
-private fun HighlightedLine(text: String, progress: Float, fontSize: TextUnit) {
+fun HighlightedLine(text: String, progress: Float, fontSize: TextUnit) {
+    val look = LocalAppearance.current
     var layout by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
     Box(Modifier.padding(vertical = 12.dp)) {
-        Text(text, fontSize = fontSize, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center)
         Text(
             text,
             fontSize = fontSize,
-            fontWeight = FontWeight.Bold,
-            color = Gold,
+            fontFamily = look.font.family,
+            fontWeight = look.font.weight,
+            color = Color.White,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text,
+            fontSize = fontSize,
+            fontFamily = look.font.family,
+            fontWeight = look.font.weight,
+            color = look.highlight.color,
             textAlign = TextAlign.Center,
             onTextLayout = { layout = it },
             modifier = Modifier.drawWithContent {
@@ -118,10 +129,11 @@ private fun ScrollingLyrics(lyrics: Lyrics, positionMs: Long, durationMs: Long?,
         0
     }
     LaunchedEffect(target) { state.animateScrollToItem((target - 3).coerceAtLeast(0)) }
+    val look = LocalAppearance.current
     Column(modifier.fillMaxSize()) {
         Text(
             "Lyrics aren't time-synced for this song, so they scroll with the music.",
-            color = Gold,
+            color = look.highlight.color,
             fontSize = 18.sp,
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             textAlign = TextAlign.Center,
@@ -130,8 +142,9 @@ private fun ScrollingLyrics(lyrics: Lyrics, positionMs: Long, durationMs: Long?,
             itemsIndexed(lyrics.lines) { i, line ->
                 Text(
                     line.text,
-                    fontSize = 34.sp,
-                    color = if (i == target) Color.White else Color.White.copy(alpha = 0.55f),
+                    fontSize = 34.sp * look.textSize.scale,
+                    fontFamily = look.font.family,
+                    color = if (i == target) look.highlight.color else Color.White.copy(alpha = 0.55f),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(vertical = 6.dp),
                 )

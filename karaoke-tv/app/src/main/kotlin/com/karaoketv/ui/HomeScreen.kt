@@ -36,7 +36,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -64,6 +63,7 @@ private enum class Tab(val label: String) {
     Library("My music"),
     Online("Find lyrics online"),
     Stream("Play from URL"),
+    Settings("Look & feel"),
 }
 
 @Composable
@@ -72,7 +72,7 @@ fun HomeScreen(vm: KaraokeViewModel) {
     Row(
         Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Night, NightLight)))
+            .background(LocalAppearance.current.background.brush)
             .padding(horizontal = 48.dp, vertical = 27.dp),
     ) {
         Column(Modifier.width(240.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -93,6 +93,7 @@ fun HomeScreen(vm: KaraokeViewModel) {
                 Tab.Library -> LibraryPane(vm)
                 Tab.Online -> OnlinePane(vm)
                 Tab.Stream -> StreamPane(vm)
+                Tab.Settings -> SettingsPane(vm)
             }
         }
     }

@@ -70,7 +70,7 @@ fun PlayerScreen(vm: KaraokeViewModel) {
     Column(
         Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Night, NightLight, Night)))
+            .background(LocalAppearance.current.background.brush)
             .onPreviewKeyEvent { e ->
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (e.key) {

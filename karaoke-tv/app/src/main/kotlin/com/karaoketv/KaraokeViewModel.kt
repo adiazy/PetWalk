@@ -33,6 +33,8 @@ import com.karaoketv.media.PlayerClock
 import com.karaoketv.media.Song
 import com.karaoketv.media.StopwatchClock
 import com.karaoketv.media.VocalRemover
+import com.karaoketv.ui.Appearance
+import com.karaoketv.ui.AppearanceStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -54,6 +56,10 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             CachedLyricsProvider(File(app.filesDir, "lyrics"), lrcLib),
         ),
     )
+
+    private val appearanceStore = AppearanceStore(app)
+    var appearance by mutableStateOf(appearanceStore.load())
+        private set
 
     private val vocalRemover = VocalRemover()
     private val player: ExoPlayer = buildPlayer(app)
@@ -101,6 +107,11 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                 playbackError = error.localizedMessage ?: error.errorCodeName
             }
         })
+    }
+
+    fun updateAppearance(change: (Appearance) -> Appearance) {
+        appearance = change(appearance)
+        appearanceStore.save(appearance)
     }
 
     fun loadLibrary() {

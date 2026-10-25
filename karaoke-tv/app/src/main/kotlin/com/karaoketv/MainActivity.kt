@@ -4,9 +4,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.karaoketv.ui.HomeScreen
 import com.karaoketv.ui.KaraokeTheme
+import com.karaoketv.ui.LocalAppearance
 import com.karaoketv.ui.PlayerScreen
 
 class MainActivity : ComponentActivity() {
@@ -15,11 +17,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             KaraokeTheme {
                 val vm: KaraokeViewModel = viewModel()
-                if (vm.nowPlaying != null) {
-                    BackHandler { vm.stop() }
-                    PlayerScreen(vm)
-                } else {
-                    HomeScreen(vm)
+                CompositionLocalProvider(LocalAppearance provides vm.appearance) {
+                    if (vm.nowPlaying != null) {
+                        BackHandler { vm.stop() }
+                        PlayerScreen(vm)
+                    } else {
+                        HomeScreen(vm)
+                    }
                 }
             }
         }
