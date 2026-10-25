@@ -54,7 +54,8 @@ Open **Look & feel** on the home screen to choose:
 
 - **Background:** Purple night, Ocean, Sunset, Forest, Neon club, Plain black
 - **Font:** Modern, Light, Classic serif, Typewriter, Handwritten
-- **Lyrics size:** Small to Huge
+- **Lyrics size:** Tiny, Extra small, Small, Medium, Large, Huge
+- **Menu & list size:** 100%, 90%, 80% or 70% for the whole app (menus, song list, buttons, lyrics)
 - **Highlight color:** the color that sweeps across the line being sung
 
 A preview shows changes live, and your choices are saved on the TV.

@@ -79,6 +79,11 @@ private fun SettingsContent(vm: KaraokeViewModel) {
             }
         }
         item {
+            OptionRow("Menu & list size (whole app)", UiScale.entries, look.uiScale, { it.label }) { choice ->
+                vm.updateAppearance { it.copy(uiScale = choice) }
+            }
+        }
+        item {
             OptionRow("Highlight color", HighlightColor.entries, look.highlight, { it.label }) { choice ->
                 vm.updateAppearance { it.copy(highlight = choice) }
             }

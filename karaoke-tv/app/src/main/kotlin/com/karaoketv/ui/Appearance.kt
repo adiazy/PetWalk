@@ -28,10 +28,20 @@ enum class FontChoice(val label: String, val family: FontFamily, val weight: Fon
 }
 
 enum class TextSize(val label: String, val scale: Float) {
+    Tiny("Tiny", 0.55f),
+    ExtraSmall("Extra small", 0.65f),
     Small("Small", 0.8f),
     Medium("Medium", 1f),
     Large("Large", 1.25f),
     Huge("Huge", 1.5f),
+}
+
+/** Scales the whole app (menus, lists, buttons and lyrics) for TVs where everything looks too big. */
+enum class UiScale(val label: String, val scale: Float) {
+    Normal("100%", 1f),
+    Smaller("90%", 0.9f),
+    Small("80%", 0.8f),
+    Compact("70%", 0.7f),
 }
 
 enum class HighlightColor(val label: String, val color: Color) {
@@ -49,6 +59,7 @@ data class Appearance(
     val highlight: HighlightColor = HighlightColor.Gold,
     /** Show the song's album art behind the lyrics when there is any. */
     val albumArtBackground: Boolean = true,
+    val uiScale: UiScale = UiScale.Normal,
 )
 
 val LocalAppearance = staticCompositionLocalOf { Appearance() }
@@ -63,6 +74,7 @@ class AppearanceStore(context: Context) {
         textSize = enumOr(prefs.getString(KEY_SIZE, null), TextSize.Medium),
         highlight = enumOr(prefs.getString(KEY_HIGHLIGHT, null), HighlightColor.Gold),
         albumArtBackground = prefs.getBoolean(KEY_ALBUM_ART, true),
+        uiScale = enumOr(prefs.getString(KEY_UI_SCALE, null), UiScale.Normal),
     )
 
     fun save(a: Appearance) {
@@ -72,6 +84,7 @@ class AppearanceStore(context: Context) {
             .putString(KEY_SIZE, a.textSize.name)
             .putString(KEY_HIGHLIGHT, a.highlight.name)
             .putBoolean(KEY_ALBUM_ART, a.albumArtBackground)
+            .putString(KEY_UI_SCALE, a.uiScale.name)
             .apply()
     }
 
@@ -84,5 +97,6 @@ class AppearanceStore(context: Context) {
         const val KEY_SIZE = "size"
         const val KEY_HIGHLIGHT = "highlight"
         const val KEY_ALBUM_ART = "album_art_background"
+        const val KEY_UI_SCALE = "ui_scale"
     }
 }
