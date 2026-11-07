@@ -10,7 +10,6 @@ An Android TV karaoke app: plays your music with time-synced, highlighted lyrics
 | **My music → this TV**: songs on the TV's storage and USB drives | Audio + lyrics |
 | **Sidecar `.lrc` files**: `Song.mp3` + `Song.lrc` in the same folder | Synced lyrics, offline |
 | **[LRCLIB](https://lrclib.net)**: free, open lyrics database, no API key | Synced lyrics for millions of songs, looked up when a song plays (nothing is saved) |
-| **[lyrics.ovh](https://lyricsovh.docs.apiary.io)**: free backup, no API key | Plain (unsynced) lyrics when LRCLIB is busy or has nothing; needs the artist name |
 | **Play from URL**: any direct MP3/AAC/FLAC/HLS link (NAS, Jellyfin/Plex direct links, radio) | Audio; lyrics looked up from the title you enter or from the stream's metadata |
 | **Find lyrics online, lyrics-only mode** | Timed lyrics on the TV while the backing track plays from a phone or speaker |
 

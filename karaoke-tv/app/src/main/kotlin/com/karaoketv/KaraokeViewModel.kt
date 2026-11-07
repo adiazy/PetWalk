@@ -29,7 +29,6 @@ import com.karaoketv.core.library.SmbLocation
 import com.karaoketv.core.lyrics.LrcLibClient
 import com.karaoketv.core.lyrics.LrcLibTrack
 import com.karaoketv.core.lyrics.Lyrics
-import com.karaoketv.core.lyrics.LyricsOvhClient
 import com.karaoketv.core.lyrics.LyricsRepository
 import com.karaoketv.core.lyrics.SidecarLrcProvider
 import com.karaoketv.media.Artwork
@@ -79,8 +78,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     private val shareLyrics = SmbSidecarLrcProvider({ smb }, { lyricsDir })
     private val lyricsRepository = LyricsRepository(
         providers = listOf(SidecarLrcProvider(), shareLyrics),
-        // Asked at the same time; lyrics.ovh is a plain-text backup for when LRCLIB has nothing.
-        online = listOf(lrcLib, LyricsOvhClient()),
+        online = listOf(lrcLib),
     )
 
     private val appearanceStore = AppearanceStore(app)

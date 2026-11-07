@@ -90,31 +90,6 @@ class LyricsSourcesTest {
     }
 
     @Test
-    fun lyricsOvhBackup() {
-        val urls = mutableListOf<String>()
-        val ovh = LyricsOvhClient(http = { url, _ ->
-            urls += url
-            200 to """{"lyrics":"Paroles de la chanson Hello par Adele\r\nHello, it's me\r\nI was wondering"}"""
-        })
-        val lyrics = assertNotNull(ovh.find(LyricsQuery("Hello", "Adele")))
-        assertEquals(false, lyrics.synced)
-        assertEquals(listOf("Hello, it's me", "I was wondering"), lyrics.lines.map { it.text })
-        assertEquals("https://api.lyrics.ovh/v1/Adele/Hello", urls.single())
-        assertNull(ovh.find(LyricsQuery("Hello")))
-        assertNull(LyricsOvhClient(http = { _, _ -> 404 to """{"error":"No lyrics found"}""" }).find(LyricsQuery("x", "y")))
-    }
-
-    @Test
-    fun backupUsedWhenLrcLibIsBusy() {
-        val repo = LyricsRepository(listOf(
-            LrcLibClient(http = { _, _ -> 503 to "" }, sleep = {}),
-            LyricsOvhClient(http = { _, _ -> 200 to """{"lyrics":"line"}""" }),
-        ))
-        val report = repo.search(LyricsQuery("Song", "Band"))
-        assertEquals("lyrics.ovh", report.lyrics?.source)
-    }
-
-    @Test
     fun cleansTitlesForMatching() {
         assertEquals("Hey Ya!", LyricsQuery("Hey Ya! - Radio Edit").cleaned().title)
         assertEquals("Come Together", LyricsQuery("Come Together - Remastered 2009").cleaned().title)

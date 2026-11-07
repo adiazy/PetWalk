@@ -122,7 +122,6 @@ class LyricsRepository(
     private val LyricsProvider.name
         get() = when (this) {
             is LrcLibClient -> "Online lyrics"
-            is LyricsOvhClient -> "Backup lyrics"
             else -> this::class.simpleName?.removeSuffix("Provider") ?: "Lyrics source"
         }
 
