@@ -18,8 +18,8 @@ if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
     $env:Path += ";$platformTools"
 }
 
-# The Android build needs Java 17+. If the default Java is older (e.g. Java 8),
-# use the one bundled with Android Studio for this build.
+# The Android build needs Java 17-21: older ones (Java 8) can't run the Android plugin, and
+# newer ones (Java 25) are too new for this Gradle/Kotlin. Otherwise use Android Studio's Java.
 function Get-JavaMajor([string]$javaExe) {
     if (-not $javaExe -or -not (Test-Path $javaExe)) { return 0 }
     # java -version writes to stderr, which "Stop" would turn into a fatal error.
@@ -30,15 +30,16 @@ function Get-JavaMajor([string]$javaExe) {
     return 0
 }
 $currentJava = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME "bin\java.exe" } else { (Get-Command java -ErrorAction SilentlyContinue).Source }
-if ((Get-JavaMajor $currentJava) -lt 17) {
+function Test-JavaOk([int]$major) { $major -ge 17 -and $major -le 21 }
+if (-not (Test-JavaOk (Get-JavaMajor $currentJava))) {
     $studioJava = @(
         "$env:ProgramFiles\Android\Android Studio\jbr",
         "$env:ProgramFiles\Android\Android Studio\jre",
         "$env:LOCALAPPDATA\Programs\Android Studio\jbr",
         "${env:ProgramFiles(x86)}\Android\Android Studio\jbr"
-    ) | Where-Object { (Get-JavaMajor (Join-Path $_ "bin\java.exe")) -ge 17 } | Select-Object -First 1
+    ) | Where-Object { Test-JavaOk (Get-JavaMajor (Join-Path $_ "bin\java.exe")) } | Select-Object -First 1
     if (-not $studioJava) {
-        Write-Host "Java 17 or newer is needed and Android Studio's Java wasn't found." -ForegroundColor Red
+        Write-Host "Java 17-21 is needed (found: $currentJava) and Android Studio's Java wasn't found." -ForegroundColor Red
         Write-Host "Set it with:  `$env:JAVA_HOME = '<Android Studio folder>\jbr'  and run this script again." -ForegroundColor Yellow
         exit 1
     }
