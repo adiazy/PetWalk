@@ -19,8 +19,10 @@ object LocalLibrary {
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.TRACK,
+            MediaStore.Audio.Media.YEAR,
             @Suppress("DEPRECATION") MediaStore.Audio.Media.DATA,
-        )
+        ) + if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) arrayOf(MediaStore.Audio.Media.ALBUM_ARTIST) else emptyArray()
         val songs = mutableListOf<Song>()
         context.contentResolver.query(
             collection,
@@ -34,18 +36,33 @@ object LocalLibrary {
             val artistCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
             val albumCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
             val durationCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            val trackCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)
+            val yearCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)
+            val albumArtistCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                c.getColumnIndex(MediaStore.Audio.Media.ALBUM_ARTIST)
+            } else {
+                -1
+            }
             @Suppress("DEPRECATION")
             val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
             while (c.moveToNext()) {
                 val id = c.getLong(idCol)
+                val artist = c.getString(artistCol)
+                // MediaStore stores disc and track together as disc * 1000 + track.
+                val trackField = c.getInt(trackCol)
                 songs += Song(
                     id = "local:$id",
                     title = c.getString(titleCol) ?: "Untitled",
-                    artist = c.getString(artistCol),
+                    artist = artist,
                     album = c.getString(albumCol),
                     durationMs = c.getLong(durationCol).takeIf { it > 0 },
                     uri = ContentUris.withAppendedId(collection, id),
                     path = c.getString(dataCol),
+                    libraryArtist = (if (albumArtistCol >= 0) c.getString(albumArtistCol) else null) ?: artist,
+                    track = (trackField % 1000).takeIf { it > 0 },
+                    disc = (trackField / 1000).takeIf { it > 0 },
+                    year = c.getInt(yearCol).takeIf { it > 0 },
+                    tagsRead = true,
                 )
             }
         }

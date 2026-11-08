@@ -9,11 +9,17 @@ object LyricsFileNames {
     private val illegal = Regex("""[\\/:*?"<>|\x00-\x1F]""")
 
     /** Base names (without extension), best first. */
-    fun candidates(artist: String?, title: String, audioFileName: String? = null): List<String> = buildList {
+    fun candidates(
+        artist: String?,
+        title: String,
+        audioFileName: String? = null,
+        extra: List<String> = emptyList(),
+    ): List<String> = buildList {
         val cleanTitle = sanitize(title)
         val cleanArtist = artist?.let(::sanitize)?.takeIf { it.isNotEmpty() }
         if (cleanTitle.isNotEmpty()) add(if (cleanArtist != null) "$cleanArtist - $cleanTitle" else cleanTitle)
         audioFileName?.substringBeforeLast('.')?.let(::sanitize)?.takeIf { it.isNotEmpty() }?.let(::add)
+        extra.map(::sanitize).filter { it.isNotEmpty() }.forEach(::add)
     }.distinct()
 
     fun sanitize(name: String): String =

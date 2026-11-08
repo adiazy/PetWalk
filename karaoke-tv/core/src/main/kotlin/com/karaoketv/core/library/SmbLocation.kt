@@ -62,6 +62,19 @@ object TrackName {
         return Parsed(artistFolder ?: nameArtist, fromName.title)
     }
 
+    /**
+     * The album a folder layout suggests, for files without tags: `Artist\Album\song.mp3`, or a
+     * year-named first folder (`1985 - Sports\song.mp3`). Format folders are skipped.
+     */
+    fun albumFolder(foldersBelowRoot: List<String>): String? {
+        val folders = foldersBelowRoot.dropWhile { it.matches(FORMAT_FOLDER) }.map { it.trim() }
+        return when {
+            folders.size >= 2 -> folders[1]
+            folders.size == 1 && folders[0].contains(ALBUM_FOLDER) -> folders[0]
+            else -> null
+        }?.takeUnless { it.isEmpty() || it.matches(FORMAT_FOLDER) }
+    }
+
     /** `1985 - Sports`, `2004 Live`: an album, not an artist. */
     private val ALBUM_FOLDER = Regex("""^\s*(19|20)\d{2}\b""")
 

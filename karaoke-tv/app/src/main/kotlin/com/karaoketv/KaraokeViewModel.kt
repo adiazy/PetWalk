@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -26,11 +27,13 @@ import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.karaoketv.core.library.SmbLocation
+import com.karaoketv.core.library.TagCache
 import com.karaoketv.core.lyrics.LrcLibClient
 import com.karaoketv.core.lyrics.LrcLibTrack
 import com.karaoketv.core.lyrics.Lyrics
 import com.karaoketv.core.lyrics.LyricsRepository
 import com.karaoketv.core.lyrics.SidecarLrcProvider
+import com.karaoketv.media.ArtLoader
 import com.karaoketv.media.Artwork
 import com.karaoketv.media.KaraokeDataSourceFactory
 import com.karaoketv.media.LocalLibrary
@@ -46,6 +49,9 @@ import com.karaoketv.media.VocalRemover
 import com.karaoketv.ui.Appearance
 import com.karaoketv.ui.AppearanceStore
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -71,6 +77,13 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     @Volatile
     private var lyricsDir: String? = lyricsDirFor(networkFolder)
+
+    /** Share-relative folder for the library index and artwork thumbnails on the NAS. */
+    @Volatile
+    private var appDataDir: String? = dirOnMusicShare(networkFolder, networkFolder.appDataFolder)
+
+    /** Artist and album pictures for the image menus. */
+    val art = ArtLoader(app, { smb }, { appDataDir })
 
     private val lrcLib = LrcLibClient()
 
@@ -169,17 +182,21 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         if (libraryLoading) return
         libraryLoading = true
         libraryError = null
+        tagJob?.cancel()
         val folder = networkFolder
         val connection = smb
+        var index: TagCache? = null
         viewModelScope.launch {
             val (songs, error) = withContext(Dispatchers.IO) {
                 val dir = lyricsDir
                 val network = connection?.let { smbConnection ->
                     runCatching {
-                        val lrcFiles = dir?.let { runCatching { smbConnection.listNames(it) }.getOrNull() }.orEmpty()
+                        lrcFolderFiles = dir?.let { runCatching { smbConnection.listNames(it) }.getOrNull() }.orEmpty()
+                        index = libraryIndex(smbConnection)
                         smbConnection.scan().map { song ->
-                            if (song.hasLyricsFile || !shareLyrics.hasFile(song.toQuery().cleaned(), lrcFiles)) song
-                            else song.copy(hasLyricsFile = true)
+                            // Tags stored in the NAS library index, if the file hasn't changed.
+                            val stored = index?.get(song.id.removePrefix("smb:"), song.sizeBytes ?: -1, song.modifiedMs ?: -1)
+                            markLyricsFile(if (stored != null) song.applyTags(stored.tags) else song)
                         }
                     }
                 }
@@ -200,6 +217,70 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             library = songs
             libraryError = error
             libraryLoading = false
+            if (connection != null) readMissingTags(connection, index)
+        }
+    }
+
+    // ---- Song tags, kept in a library index on the NAS ----
+
+    /** Progress of reading song tags, or a problem saving the library index; null when idle. */
+    var tagStatus by mutableStateOf<String?>(null)
+        private set
+    private var tagJob: Job? = null
+    private var lrcFolderFiles: Set<String> = emptySet()
+
+    /** The library index file in the app's NAS folder, or null if no usable folder is set. */
+    private fun libraryIndex(connection: SmbConnection): TagCache? {
+        val dir = appDataDir ?: return null
+        val file = "$dir\\$LIBRARY_INDEX_FILE"
+        return TagCache(
+            read = { connection.readText(file) },
+            write = { text ->
+                connection.ensureFolder(dir)
+                connection.writeText(file, text)
+            },
+        )
+    }
+
+    private fun markLyricsFile(song: Song): Song =
+        if (song.hasLyricsFile || !shareLyrics.hasFile(song.toQuery().cleaned(), lrcFolderFiles)) song
+        else song.copy(hasLyricsFile = true)
+
+    /** Reads tags for new or changed files, a few at a time, updating the menu as they arrive. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun readMissingTags(connection: SmbConnection, index: TagCache?) {
+        tagJob?.cancel()
+        val networkSongs = library.filter { it.id.startsWith("smb:") }
+        val keep = networkSongs.mapTo(HashSet()) { it.id.removePrefix("smb:") }
+        val todo = networkSongs.filter { !it.tagsRead }
+        tagJob = viewModelScope.launch {
+            if (todo.isNotEmpty()) {
+                val readers = Dispatchers.IO.limitedParallelism(TAG_READERS)
+                var done = 0
+                for ((n, chunk) in todo.chunked(TAG_CHUNK).withIndex()) {
+                    tagStatus = "Reading song tags ${done + 1}–${done + chunk.size} of ${todo.size}…"
+                    val read = chunk.map { song ->
+                        async(readers) {
+                            val path = song.id.removePrefix("smb:")
+                            val result = runCatching { connection.readTags(path) }
+                            // Only remember real answers; a network hiccup shouldn't stick.
+                            result.onSuccess { index?.put(path, song.sizeBytes ?: -1, song.modifiedMs ?: -1, it) }
+                            song.id to result.getOrNull()
+                        }
+                    }.awaitAll().toMap()
+                    done += chunk.size
+                    library = library.map { s -> if (s.id in read) markLyricsFile(s.applyTags(read[s.id])) else s }
+                    if (n % 5 == 4) withContext(Dispatchers.IO) { runCatching { index?.save() } }
+                }
+            }
+            val saved = withContext(Dispatchers.IO) { runCatching { index?.save(keep) } }
+            tagStatus = when {
+                index == null && todo.isNotEmpty() ->
+                    "Set an app data folder on the music share (Change folder) so tags don't have to be read every time."
+                saved.isFailure ->
+                    "Couldn't save the library to the NAS: ${saved.exceptionOrNull()?.message ?: "unknown error"}"
+                else -> null
+            }
         }
     }
 
@@ -209,16 +290,21 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         val old = smb
         smb = connect(folder)
         lyricsDir = lyricsDirFor(folder)
+        appDataDir = dirOnMusicShare(folder, folder.appDataFolder)
+        art.clear()
         viewModelScope.launch(Dispatchers.IO) { runCatching { old?.close() } }
         loadLibrary()
     }
 
     /** Share-relative lyrics folder path, if it's on the same server and share as the music. */
-    private fun lyricsDirFor(folder: NetworkFolder): String? {
+    private fun lyricsDirFor(folder: NetworkFolder): String? = dirOnMusicShare(folder, folder.lyricsFolder)
+
+    /** Share-relative path of [path] if it's on the same server and share as the music. */
+    private fun dirOnMusicShare(folder: NetworkFolder, path: String): String? {
         val music = SmbLocation.parse(folder.path) ?: return null
-        val lyrics = SmbLocation.parse(folder.lyricsFolder) ?: return null
-        val sameShare = lyrics.host.equals(music.host, ignoreCase = true) && lyrics.share.equals(music.share, ignoreCase = true)
-        return lyrics.path.takeIf { sameShare && it.isNotEmpty() }
+        val target = SmbLocation.parse(path) ?: return null
+        val sameShare = target.host.equals(music.host, ignoreCase = true) && target.share.equals(music.share, ignoreCase = true)
+        return target.path.takeIf { sameShare && it.isNotEmpty() }
     }
 
     private fun connect(folder: NetworkFolder): SmbConnection? =
@@ -403,14 +489,20 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         return saved
     }
 
-    // My music list position, kept here so it survives a trip to the karaoke screen and back.
-    /** Artist whose songs are open in My music, or null. */
-    var openArtist by mutableStateOf<String?>(null)
-    /** Key of the My music row that last had focus ("artist:Name" or a song id). */
-    var focusedLibraryRow: String? = null
-    val libraryListState = LazyListState()
-    /** Set when leaving the karaoke screen, so My music puts focus back on the song just sung. */
-    var restoreLibraryFocus = false
+    // My music menu position, kept here so it survives a trip to the karaoke screen and back.
+    /** Artist picked in the image menu (its grouping name), or null for the artist grid. */
+    var browseArtist by mutableStateOf<String?>(null)
+    /** Album picked within [browseArtist], or null for that artist's album grid. */
+    var browseAlbum by mutableStateOf<String?>(null)
+    val artistGridState = LazyGridState()
+    val albumGridState = LazyGridState()
+    val songListState = LazyListState()
+    /** Last focused item on each level, to put focus back when returning to it. */
+    var focusedArtist: String? = null
+    var focusedAlbum: String? = null
+    var focusedSong: String? = null
+    /** Set by menu navigation and when leaving the karaoke screen: the menu should take focus. */
+    var libraryFocusRequest = false
 
     var lyricsDownload by mutableStateOf<String?>(null)
         private set
@@ -455,21 +547,19 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Blocking. The song with tags read from its file on the share, if it has any. */
     private fun tagsFromShare(song: Song): Song {
+        if (song.tagsRead) return song
         val uri = song.uri?.takeIf { it.scheme == "smb" } ?: return song
         val connection = smb ?: return song
         val path = connection.pathOf(uri) ?: return song
-        val tags = runCatching { connection.readTags(path) }.getOrNull() ?: return song
-        return song.copy(
-            title = tags.title,
-            artist = tags.artist ?: song.artist,
-            album = tags.album ?: song.album,
-            durationMs = tags.durationMs ?: song.durationMs,
-        )
+        return runCatching { connection.readTags(path) }.map { song.applyTags(it) }.getOrDefault(song)
     }
 
     private companion object {
         const val TAG = "KaraokeTV"
         const val TAGS_WAIT_MS = 2_500L
+        const val LIBRARY_INDEX_FILE = "library.json"
+        const val TAG_READERS = 4
+        const val TAG_CHUNK = 24
         const val BULK_PAUSE_MS = 300L
     }
 
@@ -485,7 +575,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stop() {
-        restoreLibraryFocus = true
+        libraryFocusRequest = true
         lyricsJob?.cancel()
         player.stop()
         clock.pause()

@@ -14,6 +14,8 @@ data class LyricsQuery(
     val durationMs: Long? = null,
     /** Absolute path of a local audio file, used to find a sidecar .lrc next to it. */
     val localPath: String? = null,
+    /** Other lyrics-file names to accept (e.g. the name a song had before its tags were read). */
+    val extraFileNames: List<String> = emptyList(),
 ) {
     /**
      * Cleans up typical file/video metadata: unknown artists, "Artist - Title" titles,

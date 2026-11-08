@@ -3,7 +3,6 @@ package com.karaoketv.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -28,8 +27,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,8 +34,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -67,9 +62,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.karaoketv.KaraokeViewModel
-import kotlinx.coroutines.launch
 import com.karaoketv.media.NetworkFolder
-import com.karaoketv.media.Song
 
 private enum class Tab(val label: String) {
     Library("My music"),
@@ -148,6 +141,7 @@ private fun LibraryPane(vm: KaraokeViewModel) {
             }
         }
         vm.lyricsDownload?.let { Text(it, color = Gold, style = MaterialTheme.typography.bodyMedium) }
+        vm.tagStatus?.let { Text(it, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodyMedium) }
         Spacer(Modifier.height(12.dp))
         if (editing) {
             FolderEditor(vm) { editing = false }
@@ -163,128 +157,14 @@ private fun LibraryPane(vm: KaraokeViewModel) {
                 "No music found. Put MP3/FLAC/M4A files (and optional .lrc lyrics with the same name) " +
                     "in the network folder, then press Refresh.",
             )
-            else -> ArtistList(vm)
+            else -> LibraryBrowser(vm)
         }
     }
 }
-
-/**
- * Artists as compact rows, collapsed. Selecting one opens its songs right below it (one artist
- * at a time); selecting it again or pressing Back closes it.
- */
-@Composable
-private fun ArtistList(vm: KaraokeViewModel) {
-    val groups = remember(vm.library) { groupByArtist(vm.library) }
-    val expanded = vm.openArtist
-    val listState = vm.libraryListState
-    val scope = rememberCoroutineScope()
-    val requesters = remember { HashMap<String, FocusRequester>() }
-    fun requester(key: String) = requesters.getOrPut(key) { FocusRequester() }
-
-    // Row keys in display order, to find where a row is in the list.
-    fun keys(open: String?) = buildList {
-        for ((artist, songs) in groups) {
-            add(artistKey(artist))
-            if (artist == open) songs.forEach { add(it.id) }
-        }
-    }
-
-    /** Scrolls [key] into view if needed, then gives it focus. */
-    fun focusRow(key: String, open: String?) {
-        scope.launch {
-            val index = keys(open).indexOf(key)
-            if (index < 0) return@launch
-            val visible = listState.layoutInfo.visibleItemsInfo.any { it.index == index }
-            if (!visible) listState.scrollToItem(index)
-            withFrameNanos { } // let the row be laid out before focusing it
-            runCatching { requester(key).requestFocus() }
-        }
-    }
-
-    // Coming back from a song: focus the row used last (only then, so moving through the
-    // left-hand menu isn't pulled into the list).
-    LaunchedEffect(Unit) {
-        if (!vm.restoreLibraryFocus) return@LaunchedEffect
-        vm.restoreLibraryFocus = false
-        vm.focusedLibraryRow?.let { focusRow(it, expanded) }
-    }
-
-    // Back closes the open artist and puts focus on its row instead of the top of the list.
-    BackHandler(enabled = expanded != null) {
-        val artist = expanded ?: return@BackHandler
-        vm.openArtist = null
-        vm.focusedLibraryRow = artistKey(artist)
-        focusRow(artistKey(artist), null)
-    }
-
-    LazyColumn(
-        state = listState,
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-        contentPadding = PaddingValues(bottom = 24.dp),
-    ) {
-        for ((artist, songs) in groups) {
-            val open = artist == expanded
-            val key = artistKey(artist)
-            item(key = key) {
-                CompactRow(
-                    onClick = {
-                        vm.openArtist = if (open) null else artist
-                        // Opening: bring the artist to the top so its songs are in view.
-                        if (!open) scope.launch { listState.animateScrollToItem(keys(artist).indexOf(key)) }
-                    },
-                    modifier = Modifier
-                        .focusRequester(requester(key))
-                        .onFocusChanged { if (it.isFocused) vm.focusedLibraryRow = key },
-                ) {
-                    Text(
-                        (if (open) "▾  " else "▸  ") + artist,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (open) Pink else Color.Unspecified,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        if (songs.size == 1) "1 song" else "${songs.size} songs",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.5f),
-                    )
-                }
-            }
-            if (open) {
-                items(songs, key = { it.id }) { song ->
-                    CompactRow(
-                        onClick = { vm.play(song) },
-                        indent = 28.dp,
-                        modifier = Modifier
-                            .focusRequester(requester(song.id))
-                            .onFocusChanged { if (it.isFocused) vm.focusedLibraryRow = song.id },
-                    ) {
-                        Text(
-                            song.title,
-                            style = MaterialTheme.typography.bodyLarge,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (song.hasLyricsFile) Text("♪  ", color = Gold, style = MaterialTheme.typography.labelMedium)
-                        Text(
-                            formatTime(song.durationMs).takeUnless { song.durationMs == null } ?: "",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color.White.copy(alpha = 0.5f),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun artistKey(artist: String) = "artist:$artist"
 
 /** A slim, focusable list row (about 40dp tall) for the TV remote. */
 @Composable
-private fun CompactRow(
+internal fun CompactRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     indent: Dp = 0.dp,
@@ -310,20 +190,6 @@ private fun CompactRow(
     }
 }
 
-private const val UNKNOWN_ARTIST = "Unknown artist"
-
-/** Artists A–Z (unknown last), each with its songs A–Z. */
-private fun groupByArtist(songs: List<Song>): List<Pair<String, List<Song>>> =
-    songs
-        .groupBy { song ->
-            song.artist?.trim()?.takeUnless { it.isEmpty() || it.equals("<unknown>", ignoreCase = true) } ?: UNKNOWN_ARTIST
-        }
-        // Merge "queen" and "Queen" under one heading.
-        .entries
-        .groupBy({ it.key.lowercase() }, { it })
-        .map { (_, entries) -> entries.first().key to entries.flatMap { it.value }.sortedBy { it.title.lowercase() } }
-        .sortedWith(compareBy<Pair<String, List<Song>>> { it.first == UNKNOWN_ARTIST }.thenBy { it.first.lowercase() })
-
 @Composable
 private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
     val current = vm.networkFolder
@@ -332,6 +198,7 @@ private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
     var password by remember { mutableStateOf(current.password) }
     var includeDevice by remember { mutableStateOf(current.includeDeviceMusic) }
     var lyricsFolder by remember { mutableStateOf(current.lyricsFolder) }
+    var appDataFolder by remember { mutableStateOf(current.appDataFolder) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Network folder (Windows share or NAS)", style = MaterialTheme.typography.titleMedium)
         TvTextField(path, { path = it }, """\\192.168.1.99\Public\Shared Music""", Modifier.fillMaxWidth())
@@ -342,6 +209,8 @@ private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
         )
         Text("Lyrics folder (downloads are saved here; must be on the same share)", style = MaterialTheme.typography.titleMedium)
         TvTextField(lyricsFolder, { lyricsFolder = it }, NetworkFolder.DEFAULT_LYRICS_PATH, Modifier.fillMaxWidth())
+        Text("App data folder (library index and pictures; same share)", style = MaterialTheme.typography.titleMedium)
+        TvTextField(appDataFolder, { appDataFolder = it }, NetworkFolder.DEFAULT_APP_DATA_PATH, Modifier.fillMaxWidth())
         TvTextField(user, { user = it }, "Username (optional)", Modifier.fillMaxWidth())
         TvTextField(password, { password = it }, "Password (optional)", Modifier.fillMaxWidth(), password = true)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -351,9 +220,10 @@ private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
             Button(onClick = {
                 path = NetworkFolder.DEFAULT_PATH
                 lyricsFolder = NetworkFolder.DEFAULT_LYRICS_PATH
+                appDataFolder = NetworkFolder.DEFAULT_APP_DATA_PATH
             }) { Text("Use default") }
             Button(onClick = {
-                vm.updateNetworkFolder(NetworkFolder(path.trim(), user.trim(), password, includeDevice, lyricsFolder.trim()))
+                vm.updateNetworkFolder(NetworkFolder(path.trim(), user.trim(), password, includeDevice, lyricsFolder.trim(), appDataFolder.trim()))
                 onDone()
             }) { Text("Save & scan") }
         }

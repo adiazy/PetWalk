@@ -12,18 +12,18 @@ import androidx.compose.ui.graphics.asImageBitmap
 /** Finds and decodes album art: folder images on the share, or the system's art for local songs. */
 object Artwork {
     /** Common names for album art saved next to the songs (Windows Media Player, iTunes, etc.). */
-    private val FOLDER_IMAGES = listOf(
+    val FOLDER_IMAGES = listOf(
         "cover.jpg", "folder.jpg", "front.jpg", "album.jpg", "albumart.jpg",
         "cover.png", "folder.png", "front.png", "AlbumArtLarge.jpg",
     )
     private const val MAX_SIZE_PX = 1280
 
-    fun decode(bytes: ByteArray): ImageBitmap? {
+    fun decode(bytes: ByteArray, maxSizePx: Int = MAX_SIZE_PX): ImageBitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_SIZE_PX) sample *= 2
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSizePx) sample *= 2
         val options = BitmapFactory.Options().apply { inSampleSize = sample }
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
     }

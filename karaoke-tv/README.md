@@ -31,8 +31,16 @@ path (`\\server\share\folder` or `smb://server/share/folder`) and, if the share 
 username and password (`DOMAIN\user` works too). You can also hide music stored on the TV itself.
 
 - Songs stream directly from the share, so seeking works and nothing is copied to the TV.
-- My music is a compact list of artists (A–Z, "Unknown artist" last). Select an artist to open its
-  songs (A–Z) right below it; select it again or press Back to close it. Artist and title come from
+- My music is a picture menu: **Artists → Albums → Songs**. Artists are grouped by the *album
+  artist* tag, then the artist folder, then the artist tag; spellings like "&"/"and", case and
+  accents are merged. Albums are ordered by year, songs by disc and track number. Back goes up a
+  level. Artists with one album go straight to its songs.
+- Tags (title, artist, album, track, year) are read from the files in the background the first
+  time and kept in a **library index on the NAS**, `Shared Music\.karaoke-tv\library.json`, shared
+  by every TV; only new or changed files are read again.
+- Pictures: artist from `artist.jpg`/`folder.jpg` in the artist folder (else an album cover);
+  album from `cover.jpg`/`folder.jpg` in the album folder (else art embedded in the songs). Each is
+  saved once as a thumbnail in `Shared Music\.karaoke-tv\art\`. Artist and title come from
   file names like `01 - Artist - Title.mp3`; if the name has no artist, the folder is used
   (`Artist\Album\song.mp3` or `Artist\song.mp3`). Tags inside the file correct them once it plays.
 - Album art fills the karaoke screen behind the lyrics: the cover embedded in the file, or

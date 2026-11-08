@@ -15,6 +15,8 @@ import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.share.DiskShare
 import com.karaoketv.core.library.SmbLocation
 import com.karaoketv.core.library.TrackName
+import com.karaoketv.core.library.TrackTags
+import com.karaoketv.core.lyrics.LyricsFileNames
 import java.io.Closeable
 import java.util.EnumSet
 import java.util.concurrent.TimeUnit
@@ -80,7 +82,9 @@ class SmbConnection(
         null,
     )
 
-    fun writeText(path: String, text: String) {
+    fun writeText(path: String, text: String) = writeBytes(path, text.toByteArray(Charsets.UTF_8))
+
+    fun writeBytes(path: String, bytes: ByteArray) {
         share().openFile(
             path,
             EnumSet.of(AccessMask.GENERIC_WRITE),
@@ -88,7 +92,7 @@ class SmbConnection(
             SMB2ShareAccess.ALL,
             SMB2CreateDisposition.FILE_OVERWRITE_IF,
             null,
-        ).use { file -> file.outputStream.use { it.write(text.toByteArray(Charsets.UTF_8)) } }
+        ).use { file -> file.outputStream.use { it.write(bytes) } }
     }
 
     /** Creates [path] and any missing parent folders. */
@@ -112,20 +116,36 @@ class SmbConnection(
      * Reads title/artist/album/length tags from an audio file on the share without downloading
      * it (only the parts the tag reader asks for are fetched). Null if there are none.
      */
-    fun readTags(path: String): Song? {
+    fun readTags(path: String): TrackTags? {
         val file = openRead(path)
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(SmbMediaDataSource(file))
             fun tag(key: Int) = retriever.extractMetadata(key)?.trim()?.takeIf { it.isNotEmpty() }
-            val title = tag(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: return null
-            return Song(
-                id = "smb:$path",
-                title = title,
-                artist = tag(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: tag(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST),
+            val tags = TrackTags(
+                title = tag(MediaMetadataRetriever.METADATA_KEY_TITLE),
+                artist = tag(MediaMetadataRetriever.METADATA_KEY_ARTIST),
+                albumArtist = tag(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST),
                 album = tag(MediaMetadataRetriever.METADATA_KEY_ALBUM),
+                track = TrackTags.parseNumber(tag(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)),
+                disc = TrackTags.parseNumber(tag(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)),
+                year = TrackTags.parseYear(tag(MediaMetadataRetriever.METADATA_KEY_YEAR) ?: tag(MediaMetadataRetriever.METADATA_KEY_DATE)),
                 durationMs = tag(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull(),
             )
+            return tags.takeUnless { it == TrackTags() }
+        } finally {
+            runCatching { retriever.release() }
+            runCatching { file.close() }
+        }
+    }
+
+    /** Cover art embedded in an audio file on the share, or null. */
+    fun embeddedPicture(path: String): ByteArray? {
+        val file = openRead(path)
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(SmbMediaDataSource(file))
+            return retriever.embeddedPicture
         } finally {
             runCatching { retriever.release() }
             runCatching { file.close() }
@@ -183,9 +203,13 @@ class SmbConnection(
                         id = "smb:$path",
                         title = parsed.title,
                         artist = parsed.artist,
+                        album = TrackName.albumFolder(folders),
                         uri = uri,
                         path = uri.toString(),
                         hasLyricsFile = LYRICS_EXTENSIONS.any { "$base.$it" in names },
+                        sizeBytes = entry.endOfFile,
+                        modifiedMs = entry.lastWriteTime.toEpochMillis(),
+                        nameGuess = LyricsFileNames.candidates(parsed.artist, parsed.title).firstOrNull(),
                     )
                 }
             }
