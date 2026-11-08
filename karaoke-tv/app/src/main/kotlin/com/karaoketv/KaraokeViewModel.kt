@@ -247,7 +247,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         else song.copy(hasLyricsFile = true)
 
     /** Reads tags for new or changed files, a few at a time, updating the menu as they arrive. */
-    @OptIn(ExperimentalCoroutinesApi::class)
+    @kotlin.OptIn(ExperimentalCoroutinesApi::class)
     private fun readMissingTags(connection: SmbConnection, index: TagCache?) {
         tagJob?.cancel()
         val networkSongs = library.filter { it.id.startsWith("smb:") }
