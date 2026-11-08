@@ -32,12 +32,24 @@ function Get-JavaMajor([string]$javaExe) {
 $currentJava = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME "bin\java.exe" } else { (Get-Command java -ErrorAction SilentlyContinue).Source }
 function Test-JavaOk([int]$major) { $major -ge 17 -and $major -le 21 }
 if (-not (Test-JavaOk (Get-JavaMajor $currentJava))) {
-    $studioJava = @(
+    # Where Android Studio (or JetBrains) keeps a suitable Java: the usual install folders, the
+    # install location Windows recorded for Android Studio, Toolbox installs and ~\.jdks downloads.
+    $candidates = @(
         "$env:ProgramFiles\Android\Android Studio\jbr",
         "$env:ProgramFiles\Android\Android Studio\jre",
         "$env:LOCALAPPDATA\Programs\Android Studio\jbr",
         "${env:ProgramFiles(x86)}\Android\Android Studio\jbr"
-    ) | Where-Object { Test-JavaOk (Get-JavaMajor (Join-Path $_ "bin\java.exe")) } | Select-Object -First 1
+    )
+    $uninstallKeys = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    $candidates += Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -like "Android Studio*" -and $_.InstallLocation } |
+        ForEach-Object { Join-Path $_.InstallLocation "jbr" }
+    $candidates += Get-ChildItem "$env:LOCALAPPDATA\JetBrains\Toolbox\apps", "$HOME\.jdks" -Filter java.exe -Recurse -Depth 6 -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.Directory.Parent.FullName }
+    $studioJava = $candidates | Where-Object { $_ } |
+        Where-Object { Test-JavaOk (Get-JavaMajor (Join-Path $_ "bin\java.exe")) } | Select-Object -First 1
     if (-not $studioJava) {
         Write-Host "Java 17-21 is needed (found: $currentJava) and Android Studio's Java wasn't found." -ForegroundColor Red
         Write-Host "Set it with:  `$env:JAVA_HOME = '<Android Studio folder>\jbr'  and run this script again." -ForegroundColor Yellow
