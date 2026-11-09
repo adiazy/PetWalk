@@ -136,11 +136,11 @@ private fun LibraryPane(vm: KaraokeViewModel) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { editing = !editing }) { Text(if (editing) "Cancel" else "Change folder") }
             Button(onClick = vm::loadLibrary) { Text("Refresh") }
-            Button(onClick = vm::downloadAllLyrics) {
-                Text(if (vm.lyricsDownload?.startsWith("Downloading") == true) "Stop" else "Download lyrics for all songs")
+            Button(onClick = vm::toggleBackgroundDownloads) {
+                Text(if (vm.backgroundPaused) "Resume background downloads" else "Pause background downloads")
             }
         }
-        vm.lyricsDownload?.let { Text(it, color = Gold, style = MaterialTheme.typography.bodyMedium) }
+        vm.backgroundStatus?.let { Text(it, color = Gold, style = MaterialTheme.typography.bodyMedium) }
         vm.tagStatus?.let { Text(it, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodyMedium) }
         Spacer(Modifier.height(12.dp))
         if (editing) {
@@ -223,7 +223,16 @@ private fun FolderEditor(vm: KaraokeViewModel, onDone: () -> Unit) {
                 appDataFolder = NetworkFolder.DEFAULT_APP_DATA_PATH
             }) { Text("Use default") }
             Button(onClick = {
-                vm.updateNetworkFolder(NetworkFolder(path.trim(), user.trim(), password, includeDevice, lyricsFolder.trim(), appDataFolder.trim()))
+                vm.updateNetworkFolder(
+                    current.copy(
+                        path = path.trim(),
+                        username = user.trim(),
+                        password = password,
+                        includeDeviceMusic = includeDevice,
+                        lyricsFolder = lyricsFolder.trim(),
+                        appDataFolder = appDataFolder.trim(),
+                    ),
+                )
                 onDone()
             }) { Text("Save & scan") }
         }

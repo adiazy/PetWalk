@@ -105,6 +105,14 @@ class SmbConnection(
         }
     }
 
+    fun exists(path: String): Boolean = share().fileExists(path)
+
+    /** Deletes a file if it exists. */
+    fun delete(path: String) {
+        val disk = share()
+        if (disk.fileExists(path)) disk.rm(path)
+    }
+
     /** Lower-cased names of the files in [dir], or empty if it doesn't exist. */
     fun listNames(dir: String): Set<String> {
         val disk = share()

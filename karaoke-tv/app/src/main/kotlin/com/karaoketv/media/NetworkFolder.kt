@@ -12,6 +12,8 @@ data class NetworkFolder(
     val lyricsFolder: String = DEFAULT_LYRICS_PATH,
     /** Where the app keeps its library index on the NAS; must be on the same share as [path]. */
     val appDataFolder: String = DEFAULT_APP_DATA_PATH,
+    /** Download lyrics and pictures for the whole library in the background. */
+    val backgroundDownloads: Boolean = true,
 ) {
     companion object {
         const val DEFAULT_PATH = """\\192.168.1.99\Public\Shared Music"""
@@ -30,6 +32,7 @@ class NetworkFolderStore(context: Context) {
         includeDeviceMusic = prefs.getBoolean(KEY_DEVICE, true),
         lyricsFolder = prefs.getString(KEY_LYRICS_FOLDER, null) ?: NetworkFolder.DEFAULT_LYRICS_PATH,
         appDataFolder = prefs.getString(KEY_APP_DATA_FOLDER, null) ?: NetworkFolder.DEFAULT_APP_DATA_PATH,
+        backgroundDownloads = prefs.getBoolean(KEY_BACKGROUND, true),
     )
 
     fun save(folder: NetworkFolder) {
@@ -40,6 +43,7 @@ class NetworkFolderStore(context: Context) {
             .putBoolean(KEY_DEVICE, folder.includeDeviceMusic)
             .putString(KEY_LYRICS_FOLDER, folder.lyricsFolder)
             .putString(KEY_APP_DATA_FOLDER, folder.appDataFolder)
+            .putBoolean(KEY_BACKGROUND, folder.backgroundDownloads)
             .apply()
     }
 
@@ -50,5 +54,6 @@ class NetworkFolderStore(context: Context) {
         const val KEY_DEVICE = "include_device_music"
         const val KEY_LYRICS_FOLDER = "lyrics_folder"
         const val KEY_APP_DATA_FOLDER = "app_data_folder"
+        const val KEY_BACKGROUND = "background_downloads"
     }
 }

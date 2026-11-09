@@ -26,6 +26,8 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.karaoketv.core.library.LibraryTree
+import com.karaoketv.core.library.MissLog
 import com.karaoketv.core.library.SmbLocation
 import com.karaoketv.core.library.TagCache
 import com.karaoketv.core.lyrics.LrcLibClient
@@ -183,6 +185,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         libraryLoading = true
         libraryError = null
         tagJob?.cancel()
+        backgroundJob?.cancel()
         val folder = networkFolder
         val connection = smb
         var index: TagCache? = null
@@ -274,6 +277,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             val saved = withContext(Dispatchers.IO) { runCatching { index?.save(keep) } }
+            startBackgroundDownloads()
             tagStatus = when {
                 index == null && todo.isNotEmpty() ->
                     "Set an app data folder on the music share (Change folder) so tags don't have to be read every time."
@@ -504,54 +508,87 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     /** Set by menu navigation and when leaving the karaoke screen: the menu should take focus. */
     var libraryFocusRequest = false
 
-    var lyricsDownload by mutableStateOf<String?>(null)
-        private set
-    private var lyricsDownloadJob: Job? = null
-    val downloadingLyrics get() = lyricsDownloadJob?.isActive == true
+    // ---- Background downloads: lyrics and pictures for the whole library ----
 
-    /** Downloads lyrics for every song that doesn't have a lyrics file yet; call again to stop. */
-    fun downloadAllLyrics() {
-        if (downloadingLyrics) {
-            lyricsDownloadJob?.cancel()
-            lyricsDownload = "Stopped."
-            return
-        }
-        if (lyricsDir == null) {
-            lyricsDownload = "Set a lyrics folder on the same share as the music (Change folder)."
-            return
-        }
-        val todo = library.filter { !it.hasLyricsFile }
-        if (todo.isEmpty()) {
-            lyricsDownload = "Every song already has a lyrics file."
-            return
-        }
-        lyricsDownloadJob = viewModelScope.launch {
-            var saved = 0
-            var notFound = 0
-            for ((i, song) in todo.withIndex()) {
-                lyricsDownload = "Downloading lyrics ${i + 1}/${todo.size}: ${song.title}  (saved $saved)"
-                val ok = withContext(Dispatchers.IO) {
-                    // Tags inside the file (title, artist, length) match far better than file names.
-                    val tagged = tagsFromShare(song)
-                    val found = runCatching { lyricsRepository.find(tagged.toQuery()) }.getOrNull()
-                    if (found == null || !found.synced) notFound++
-                    found != null && saveLyrics(song, found)
-                }
-                if (ok) saved++
-                delay(BULK_PAUSE_MS) // be gentle with the free lyrics service
-            }
-            lyricsDownload = "Done: saved $saved lyrics files" +
-                (if (notFound > 0) "; no synced lyrics found for $notFound songs" else "") + "."
+    /** What the background downloads are doing, or null when idle/finished. */
+    var backgroundStatus by mutableStateOf<String?>(null)
+        private set
+    private var backgroundJob: Job? = null
+    val backgroundPaused get() = !networkFolder.backgroundDownloads
+
+    fun toggleBackgroundDownloads() {
+        networkFolder = networkFolder.copy(backgroundDownloads = !networkFolder.backgroundDownloads)
+        folderStore.save(networkFolder)
+        if (networkFolder.backgroundDownloads) {
+            startBackgroundDownloads()
+        } else {
+            backgroundJob?.cancel()
+            backgroundStatus = "Background downloads paused."
         }
     }
 
-    /** Blocking. The song with tags read from its file on the share, if it has any. */
-    private fun tagsFromShare(song: Song): Song {
-        if (song.tagsRead) return song
-        val uri = song.uri?.takeIf { it.scheme == "smb" } ?: return song
-        val connection = smb ?: return song
-        val path = connection.pathOf(uri) ?: return song
-        return runCatching { connection.readTags(path) }.map { song.applyTags(it) }.getOrDefault(song)
+    /**
+     * Once the library and its tags are loaded: download synced lyrics for every song without a
+     * lyrics file, then make sure every album and artist has a picture thumbnail on the NAS.
+     * Paced gently; skips what's already on the NAS and lyrics LRCLIB recently didn't have, so
+     * after a restart it carries on where it stopped.
+     */
+    private fun startBackgroundDownloads() {
+        backgroundJob?.cancel()
+        if (!networkFolder.backgroundDownloads) {
+            backgroundStatus = "Background downloads paused."
+            return
+        }
+        val connection = smb ?: return
+        backgroundJob = viewModelScope.launch {
+            val misses = withContext(Dispatchers.IO) { lyricsMissLog(connection) }
+
+            if (lyricsDir != null) {
+                val todo = library.filter {
+                    !it.hasLyricsFile && it.preloadedLyrics == null && misses?.recentlyMissed(it.id) != true
+                }
+                var saved = 0
+                for ((i, queued) in todo.withIndex()) {
+                    backgroundStatus = "Background: lyrics ${i + 1} of ${todo.size} (saved $saved)"
+                    // Use the latest entry: tags or a lyrics file may have arrived meanwhile.
+                    val song = library.firstOrNull { it.id == queued.id } ?: continue
+                    if (song.hasLyricsFile) continue
+                    val wrote = withContext(Dispatchers.IO) {
+                        val found = runCatching { lyricsRepository.find(song.toQuery()) }.getOrNull()
+                        val ok = found != null && saveLyrics(song, found)
+                        if (ok || (found != null && SmbSidecarLrcProvider.isFromShare(found))) misses?.found(song.id)
+                        else misses?.missed(song.id)
+                        ok
+                    }
+                    if (wrote) saved++
+                    if (i % 20 == 19) withContext(Dispatchers.IO) { runCatching { misses?.save() } }
+                    delay(BACKGROUND_PAUSE_MS) // be gentle with the free lyrics service
+                }
+                withContext(Dispatchers.IO) { runCatching { misses?.save() } }
+            }
+
+            val tree = LibraryTree.build(library) { it.treeInfo() }
+            for ((i, artist) in tree.withIndex()) {
+                backgroundStatus = "Background: pictures for artist ${i + 1} of ${tree.size}"
+                for (album in artist.albums) art.prefetchAlbum(artist.name, album)
+                art.prefetchArtist(artist)
+            }
+            backgroundStatus = null
+        }
+    }
+
+    /** Lyrics LRCLIB didn't have, kept on the NAS so they're retried only every two weeks. */
+    private fun lyricsMissLog(connection: SmbConnection): MissLog? {
+        val dir = appDataDir ?: return null
+        val file = "$dir\\$LYRICS_MISSES_FILE"
+        return MissLog(
+            read = { connection.readText(file) },
+            write = { text ->
+                connection.ensureFolder(dir)
+                connection.writeText(file, text)
+            },
+            retryAfterMs = LYRICS_RETRY_MS,
+        )
     }
 
     private companion object {
@@ -560,7 +597,9 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         const val LIBRARY_INDEX_FILE = "library.json"
         const val TAG_READERS = 4
         const val TAG_CHUNK = 24
-        const val BULK_PAUSE_MS = 300L
+        const val BACKGROUND_PAUSE_MS = 400L
+        const val LYRICS_MISSES_FILE = "lyrics-missing.json"
+        const val LYRICS_RETRY_MS = 14L * 24 * 60 * 60 * 1000
     }
 
     fun togglePlay() {

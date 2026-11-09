@@ -49,7 +49,8 @@ username and password (`DOMAIN\user` works too). You can also hide music stored 
   be on the same share). When a song plays, the app looks for `Artist - Title.lrc` (or a file named
   like the audio file, e.g. `01 Song.lrc`) there first, then `Song.lrc` next to the song, then online.
 - Synced lyrics found online are downloaded into that folder as `Artist - Title.lrc`, so next time
-  they load instantly and offline. **Download lyrics for all songs** fills the folder in one go;
+  they load instantly and offline. Lyrics for the whole library download **in the background**
+  (Pause/Resume on My music); songs LRCLIB doesn't have are retried every two weeks;
   lyrics picked with **Wrong lyrics?** replace the saved file. Nothing is written next to your songs.
   Songs with a lyrics file show "♪". Saving needs write access to the share.
 - Needs SMB 2 or newer, which is the default on Windows 10/11 and current NAS firmware.

@@ -32,7 +32,10 @@ class ArtLoader(
     /** Share-relative app data folder on the NAS, or null. */
     private val appDataDir: () -> String?,
 ) {
-    private val memory = LruCache<String, ImageBitmap>(MEMORY_ITEMS)
+    // Sized by bytes (a 400 px thumbnail is about 0.6 MB), so the menus can't use too much memory.
+    private val memory = object : LruCache<String, ImageBitmap>(MEMORY_BYTES) {
+        override fun sizeOf(key: String, value: ImageBitmap) = value.asAndroidBitmap().byteCount
+    }
     private val missing = Collections.synchronizedSet(HashSet<String>())
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -44,19 +47,60 @@ class ArtLoader(
     }
 
     suspend fun album(artist: String, album: AlbumNode<Song>): ImageBitmap? =
-        load("album:${LibraryTree.key(artist)}/${LibraryTree.key(album.name)}") { findAlbumArt(album.songs) }
+        load(albumKey(artist, album)) { findAlbumArt(album.songs) }
 
     suspend fun artist(artist: ArtistNode<Song>): ImageBitmap? =
-        load("artist:${LibraryTree.key(artist.name)}") {
+        load(artistKey(artist)) {
             findArtistArt(artist) ?: artist.albums.firstNotNullOfOrNull { album(artist.name, it) }
         }
+
+    /**
+     * Background download: makes sure the album has a thumbnail on the NAS (or a "no picture"
+     * marker), without keeping it in memory. Returns true if it has a picture.
+     */
+    suspend fun prefetchAlbum(artist: String, album: AlbumNode<Song>): Boolean =
+        prefetch(albumKey(artist, album)) { findAlbumArt(album.songs) }
+
+    /** Like [prefetchAlbum], for the artist picture (falling back to an album's thumbnail). */
+    suspend fun prefetchArtist(artist: ArtistNode<Song>): Boolean =
+        prefetch(artistKey(artist)) {
+            findArtistArt(artist) ?: artist.albums.firstNotNullOfOrNull { storedThumb(albumKey(artist.name, it)) }
+        }
+
+    private fun albumKey(artist: String, album: AlbumNode<Song>) = "album:${LibraryTree.key(artist)}/${LibraryTree.key(album.name)}"
+    private fun artistKey(artist: ArtistNode<Song>) = "artist:${LibraryTree.key(artist.name)}"
+
+    private fun thumbPath(key: String) = appDataDir()?.let { "$it\\art\\${hash(key)}.jpg" }
+
+    /** "Looked, found no picture": a tiny file next to where the thumbnail would be. */
+    private fun noneMarker(thumb: String) = thumb.removeSuffix(".jpg") + ".none"
+
+    private fun storedThumb(key: String): ImageBitmap? {
+        val smb = connection() ?: return null
+        val thumb = thumbPath(key) ?: return null
+        return runCatching { smb.readBytes(thumb) }.getOrNull()?.let { Artwork.decode(it, THUMB_PX) }
+    }
+
+    private suspend fun prefetch(key: String, find: suspend () -> ImageBitmap?): Boolean = withContext(io) {
+        if (memory.get(key) != null) return@withContext true
+        val smb = connection() ?: return@withContext false
+        val thumb = thumbPath(key) ?: return@withContext false
+        if (runCatching { smb.exists(thumb) }.getOrDefault(false)) return@withContext true
+        if (runCatching { smb.exists(noneMarker(thumb)) }.getOrDefault(false)) return@withContext false
+        val found = runCatching { find() }.getOrNull()
+        runCatching {
+            smb.ensureFolder(thumb.substringBeforeLast('\\'))
+            if (found != null) smb.writeBytes(thumb, jpeg(found)) else smb.writeBytes(noneMarker(thumb), ByteArray(0))
+        }
+        found != null
+    }
 
     private suspend fun load(key: String, find: suspend () -> ImageBitmap?): ImageBitmap? {
         memory.get(key)?.let { return it }
         if (key in missing) return null
         val image = withContext(io) {
             val smb = connection()
-            val thumb = appDataDir()?.let { "$it\\art\\${hash(key)}.jpg" }
+            val thumb = thumbPath(key)
             if (smb != null && thumb != null) {
                 runCatching { smb.readBytes(thumb) }.getOrNull()?.let { bytes -> Artwork.decode(bytes, THUMB_PX) }
                     ?.let { return@withContext it }
@@ -66,6 +110,7 @@ class ArtLoader(
                 runCatching {
                     smb.ensureFolder(thumb.substringBeforeLast('\\'))
                     smb.writeBytes(thumb, jpeg(found))
+                    smb.delete(noneMarker(thumb)) // a picture was added since the last look
                 }
             }
             found
@@ -126,7 +171,7 @@ class ArtLoader(
 
     private companion object {
         const val THUMB_PX = 400
-        const val MEMORY_ITEMS = 300
+        val MEMORY_BYTES = minOf(48L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 8).toInt()
         const val EMBEDDED_TRIES = 3
         val ARTIST_IMAGES = listOf("artist.jpg", "artist.png", "photo.jpg", "band.jpg")
     }

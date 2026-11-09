@@ -96,4 +96,20 @@ class LibraryTreeTest {
         assertNull(TrackName.albumFolder(listOf("Adele")))
         assertNull(TrackName.albumFolder(emptyList()))
     }
+
+    @Test
+    fun missLogWaitsBeforeRetrying() {
+        var stored: String? = null
+        var clock = 1_000L
+        val log = MissLog({ stored }, { stored = it }, retryAfterMs = 100, now = { clock })
+        log.missed("song")
+        assertEquals(true, log.recentlyMissed("song"))
+        log.save()
+        clock += 50
+        assertEquals(true, MissLog({ stored }, { stored = it }, 100, { clock }).recentlyMissed("song"))
+        clock += 60
+        assertEquals(false, log.recentlyMissed("song"))
+        log.save()
+        assertEquals("{}", stored, "expired entries are dropped")
+    }
 }
