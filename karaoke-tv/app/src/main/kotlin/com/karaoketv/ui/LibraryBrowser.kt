@@ -247,12 +247,12 @@ private fun ArtTile(
     val image by produceState<ImageBitmap?>(null, imageKey) { value = load() }
     Card(onClick = onClick, modifier = modifier) {
         CoverBox(image, title, Modifier.fillMaxWidth().aspectRatio(1f))
-        Column(Modifier.padding(horizontal = 7.dp, vertical = 5.dp)) {
-            Text(title, fontSize = 13.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.padding(horizontal = 4.dp, vertical = 3.dp)) {
+            Text(title, fontSize = 10.sp, lineHeight = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 subtitle,
-                fontSize = 11.sp,
-                lineHeight = 14.sp,
+                fontSize = 9.sp,
+                lineHeight = 11.sp,
                 color = Color.White.copy(alpha = 0.6f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -263,7 +263,7 @@ private fun ArtTile(
 
 /** The picture, or the name's initials on a colored background while there is none. */
 @Composable
-private fun CoverBox(image: ImageBitmap?, name: String, modifier: Modifier, initialsSize: TextUnit = 26.sp) {
+private fun CoverBox(image: ImageBitmap?, name: String, modifier: Modifier, initialsSize: TextUnit = 16.sp) {
     Box(
         modifier.clip(RoundedCornerShape(8.dp)).background(placeholderBrush(name)),
         contentAlignment = Alignment.Center,
@@ -320,5 +320,5 @@ private fun placeholderBrush(name: String): Brush {
     return Brush.linearGradient(listOf(color, color.copy(alpha = 0.55f)))
 }
 
-private val TILE_WIDTH = 110.dp // 65% of the original 170dp
-private val TILE_GAP = 13.dp
+private val TILE_WIDTH = 65.dp
+private val TILE_GAP = 8.dp
