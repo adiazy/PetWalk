@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Card
@@ -109,8 +110,8 @@ private fun ArtistGrid(vm: KaraokeViewModel, tree: List<ArtistNode<Song>>) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(TILE_WIDTH),
         state = vm.artistGridState,
-        horizontalArrangement = Arrangement.spacedBy(20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        horizontalArrangement = Arrangement.spacedBy(TILE_GAP),
+        verticalArrangement = Arrangement.spacedBy(TILE_GAP),
         contentPadding = PaddingValues(bottom = 32.dp),
     ) {
         items(tree, key = { artistKey(it.name) }) { node ->
@@ -149,8 +150,8 @@ private fun AlbumGrid(vm: KaraokeViewModel, artist: ArtistNode<Song>) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(TILE_WIDTH),
         state = vm.albumGridState,
-        horizontalArrangement = Arrangement.spacedBy(20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        horizontalArrangement = Arrangement.spacedBy(TILE_GAP),
+        verticalArrangement = Arrangement.spacedBy(TILE_GAP),
         contentPadding = PaddingValues(bottom = 32.dp),
     ) {
         items(artist.albums, key = { albumKey(it.name) }) { node ->
@@ -184,7 +185,7 @@ private fun SongList(vm: KaraokeViewModel, artist: ArtistNode<Song>, album: Albu
 
     Row {
         Column(Modifier.width(220.dp)) {
-            CoverBox(cover, album.name, Modifier.size(220.dp))
+            CoverBox(cover, album.name, Modifier.size(220.dp), initialsSize = 40.sp)
             Spacer(Modifier.height(12.dp))
             Text(album.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(artist.name, style = MaterialTheme.typography.bodyMedium, color = Pink, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -246,8 +247,8 @@ private fun ArtTile(
     val image by produceState<ImageBitmap?>(null, imageKey) { value = load() }
     Card(onClick = onClick, modifier = modifier) {
         CoverBox(image, title, Modifier.fillMaxWidth().aspectRatio(1f))
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
+            Text(title, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 subtitle,
                 style = MaterialTheme.typography.labelSmall,
@@ -261,7 +262,7 @@ private fun ArtTile(
 
 /** The picture, or the name's initials on a colored background while there is none. */
 @Composable
-private fun CoverBox(image: ImageBitmap?, name: String, modifier: Modifier) {
+private fun CoverBox(image: ImageBitmap?, name: String, modifier: Modifier, initialsSize: TextUnit = 20.sp) {
     Box(
         modifier.clip(RoundedCornerShape(8.dp)).background(placeholderBrush(name)),
         contentAlignment = Alignment.Center,
@@ -269,7 +270,7 @@ private fun CoverBox(image: ImageBitmap?, name: String, modifier: Modifier) {
         if (image != null) {
             Image(image, contentDescription = name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         } else {
-            Text(initials(name), fontSize = 40.sp, color = Color.White.copy(alpha = 0.85f))
+            Text(initials(name), fontSize = initialsSize, color = Color.White.copy(alpha = 0.85f))
         }
     }
 }
@@ -318,4 +319,5 @@ private fun placeholderBrush(name: String): Brush {
     return Brush.linearGradient(listOf(color, color.copy(alpha = 0.55f)))
 }
 
-private val TILE_WIDTH = 170.dp
+private val TILE_WIDTH = 85.dp
+private val TILE_GAP = 10.dp
