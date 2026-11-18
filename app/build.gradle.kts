@@ -12,11 +12,21 @@ android {
         applicationId = "com.alexdiaz.mailtriage"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
         // Redirect scheme for Microsoft (Hotmail/Outlook) sign-in.
         // Must match the redirect URI registered in Azure: com.alexdiaz.mailtriage://oauth
         manifestPlaceholders["appAuthRedirectScheme"] = "com.alexdiaz.mailtriage"
+    }
+
+    // Fixed signing key so each new build installs as an update over the previous one.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("signing/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

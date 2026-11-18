@@ -9,6 +9,8 @@ import javax.mail.Message
 import javax.mail.Multipart
 import javax.mail.Part
 import javax.mail.Session
+import javax.mail.Store
+import javax.mail.Flags
 import javax.mail.internet.InternetAddress
 import javax.mail.search.ComparisonTerm
 import javax.mail.search.ReceivedDateTerm
@@ -28,23 +30,7 @@ object MailFetcher {
         daysBack: Int,
         maxMessages: Int
     ): List<RawEmail> {
-        val props = Properties().apply {
-            put("mail.store.protocol", "imaps")
-            put("mail.imaps.host", account.host)
-            put("mail.imaps.port", "993")
-            put("mail.imaps.ssl.enable", "true")
-            put("mail.imaps.connectiontimeout", "20000")
-            put("mail.imaps.timeout", "30000")
-            if (account.provider.oauth) {
-                put("mail.imaps.auth.mechanisms", "XOAUTH2")
-                put("mail.imaps.sasl.enable", "false")
-                put("mail.imaps.auth.login.disable", "true")
-                put("mail.imaps.auth.plain.disable", "true")
-            }
-        }
-        val session = Session.getInstance(props)
-        val store = session.getStore("imaps")
-        store.connect(account.host, 993, account.email, secret)
+        val store = connect(account, secret)
         try {
             val inbox = store.getFolder("INBOX") as IMAPFolder
             inbox.open(Folder.READ_ONLY)
@@ -72,6 +58,103 @@ object MailFetcher {
         } finally {
             store.close()
         }
+    }
+
+
+    /** Full content of one message, for the reader screen. */
+    data class FullEmail(
+        val from: String,
+        val to: String,
+        val subject: String,
+        val dateMillis: Long,
+        val html: String?,
+        val text: String
+    )
+
+    fun fetchFull(account: MailAccount, secret: String, uid: Long): FullEmail {
+        val store = connect(account, secret)
+        try {
+            val inbox = store.getFolder("INBOX") as IMAPFolder
+            inbox.open(Folder.READ_ONLY)
+            try {
+                val msg = inbox.getMessageByUID(uid)
+                    ?: throw IllegalStateException("This email is no longer in the inbox")
+                return FullEmail(
+                    from = formatFrom(msg.from),
+                    to = msg.getRecipients(Message.RecipientType.TO)
+                        ?.joinToString(", ") { formatFrom(arrayOf(it)) } ?: "",
+                    subject = msg.subject ?: "(no subject)",
+                    dateMillis = (msg.receivedDate ?: msg.sentDate ?: Date()).time,
+                    html = findPart(msg, "text/html"),
+                    text = findPart(msg, "text/plain") ?: ""
+                )
+            } finally {
+                inbox.close(false)
+            }
+        } finally {
+            store.close()
+        }
+    }
+
+    /**
+     * Moves one message from INBOX to the account's Trash folder (recoverable there
+     * for the provider's usual period, e.g. 30 days in Gmail).
+     */
+    fun moveToTrash(account: MailAccount, secret: String, uid: Long) {
+        val store = connect(account, secret)
+        try {
+            val inbox = store.getFolder("INBOX") as IMAPFolder
+            inbox.open(Folder.READ_WRITE)
+            try {
+                val msg = inbox.getMessageByUID(uid) ?: return   // already gone
+                val trash = findTrash(store)
+                    ?: throw IllegalStateException("Couldn't find the Trash folder")
+                try {
+                    inbox.moveMessages(arrayOf(msg), trash)       // IMAP MOVE
+                } catch (e: Exception) {
+                    inbox.copyMessages(arrayOf(msg), trash)       // older servers
+                    msg.setFlag(Flags.Flag.DELETED, true)
+                    inbox.expunge(arrayOf(msg))
+                }
+            } finally {
+                if (inbox.isOpen) inbox.close(false)
+            }
+        } finally {
+            store.close()
+        }
+    }
+
+    private fun findTrash(store: Store): Folder? {
+        val all = store.defaultFolder.list("*")
+        // Preferred: the folder the server marks as Trash (RFC 6154)
+        all.firstOrNull { f ->
+            (f as? IMAPFolder)?.attributes?.any { it.equals("\\Trash", ignoreCase = true) } == true
+        }?.let { return it }
+        val names = listOf("[Gmail]/Trash", "[Google Mail]/Trash", "Deleted", "Deleted Items",
+            "Deleted Messages", "Trash", "INBOX.Trash", "Papelera", "[Gmail]/Papelera")
+        for (n in names) all.firstOrNull { it.fullName.equals(n, ignoreCase = true) }?.let { return it }
+        return all.firstOrNull { it.name.contains("trash", true) || it.name.contains("deleted", true) }
+    }
+
+    private fun connect(account: MailAccount, secret: String): Store {
+        val props = Properties().apply {
+            put("mail.store.protocol", "imaps")
+            put("mail.imaps.host", account.host)
+            put("mail.imaps.port", "993")
+            put("mail.imaps.ssl.enable", "true")
+            put("mail.imaps.connectiontimeout", "20000")
+            put("mail.imaps.timeout", "30000")
+            if (account.provider.oauth) {
+                put("mail.imaps.auth.mechanisms", "XOAUTH2")
+                put("mail.imaps.sasl.enable", "false")
+                put("mail.imaps.auth.login.disable", "true")
+                put("mail.imaps.auth.plain.disable", "true")
+            }
+        }
+        val session = Session.getInstance(props)
+        val store = session.getStore("imaps")
+        store.connect(account.host, 993, account.email, secret)
+        return store
     }
 
     private fun formatFrom(addresses: Array<Address>?): String {

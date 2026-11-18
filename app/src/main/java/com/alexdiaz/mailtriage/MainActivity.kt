@@ -33,6 +33,13 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.text.selection.SelectionContainer
+import android.content.Intent
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
@@ -55,13 +62,30 @@ private fun App(vm: MainViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     var screen by remember { mutableStateOf(Screen.INBOX) }
 
-    BackHandler(enabled = screen != Screen.INBOX) { screen = Screen.INBOX }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val reader = state.reader
+
+    BackHandler(enabled = reader != null) { vm.closeReader() }
+    BackHandler(enabled = reader == null && screen != Screen.INBOX) { screen = Screen.INBOX }
+
+    val onDelete: (TriagedEmail) -> Unit = { e ->
+        vm.deleteEmail(e)
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            val r = snackbar.showSnackbar(
+                message = "Moved to Trash", actionLabel = "Undo", duration = SnackbarDuration.Short
+            )
+            if (r == SnackbarResult.ActionPerformed) vm.undoDelete(e.key)
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
+                    if (reader != null) Text("Email") else Text(
                         when (screen) {
                             Screen.INBOX -> "Mail Triage"
                             Screen.ACCOUNTS -> "Accounts"
@@ -70,10 +94,13 @@ private fun App(vm: MainViewModel = viewModel()) {
                     )
                 },
                 navigationIcon = {
-                    if (screen != Screen.INBOX) TextButton(onClick = { screen = Screen.INBOX }) { Text("‹ Back") }
+                    if (reader != null) TextButton(onClick = vm::closeReader) { Text("‹ Back") }
+                    else if (screen != Screen.INBOX) TextButton(onClick = { screen = Screen.INBOX }) { Text("‹ Back") }
                 },
                 actions = {
-                    if (screen == Screen.INBOX) {
+                    if (reader != null) {
+                        TextButton(onClick = { onDelete(reader.email) }) { Text("Delete") }
+                    } else if (screen == Screen.INBOX) {
                         TextButton(onClick = { screen = Screen.ACCOUNTS }) { Text("Accounts") }
                         TextButton(onClick = { screen = Screen.SETTINGS }) { Text("Settings") }
                     }
@@ -82,8 +109,9 @@ private fun App(vm: MainViewModel = viewModel()) {
         }
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
-            when (screen) {
-                Screen.INBOX -> InboxScreen(state, vm)
+            if (reader != null) ReaderScreen(reader, vm)
+            else when (screen) {
+                Screen.INBOX -> InboxScreen(state, vm, onDelete)
                 Screen.ACCOUNTS -> AccountsScreen(state, vm)
                 Screen.SETTINGS -> SettingsScreen(state, vm)
             }
@@ -94,7 +122,7 @@ private fun App(vm: MainViewModel = viewModel()) {
 // ------------------------------------------------------------------ Inbox
 
 @Composable
-private fun InboxScreen(state: UiState, vm: MainViewModel) {
+private fun InboxScreen(state: UiState, vm: MainViewModel, onDelete: (TriagedEmail) -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
     val cats = Category.entries
     val shown = state.emails.filter { it.category == cats[tab] }
@@ -145,7 +173,7 @@ private fun InboxScreen(state: UiState, vm: MainViewModel) {
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(shown, key = { it.key }) { email -> EmailCard(email, vm) }
+                items(shown, key = { it.key }) { email -> SwipeToDelete(email, onDelete) { EmailCard(email, vm) } }
             }
         }
     }
@@ -194,7 +222,12 @@ private fun EmailCard(e: TriagedEmail, vm: MainViewModel) {
                 color = MaterialTheme.colorScheme.outline
             )
             if (expanded) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(onClick = { vm.openEmail(e) }) { Text("Open") }
                     Category.entries.filter { it != e.category }.forEach { c ->
                         AssistChip(
                             onClick = { vm.recategorize(e, c) },
@@ -205,6 +238,110 @@ private fun EmailCard(e: TriagedEmail, vm: MainViewModel) {
             }
         }
     }
+}
+
+@Composable
+private fun SwipeToDelete(e: TriagedEmail, onDelete: (TriagedEmail) -> Unit, content: @Composable () -> Unit) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.StartToEnd) { onDelete(e); true } else false
+        },
+        positionalThreshold = { total -> total * 0.4f }
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = true,
+        enableDismissFromEndToStart = false,
+        backgroundContent = {
+            Box(
+                Modifier.fillMaxSize().clip(MaterialTheme.shapes.medium)
+                    .background(Color(0xFFD32F2F)).padding(horizontal = 20.dp),
+                contentAlignment = Alignment.CenterStart
+            ) { Text("🗑  Delete", color = Color.White, fontWeight = FontWeight.SemiBold) }
+        }
+    ) { content() }
+}
+
+// ------------------------------------------------------------------ Reader
+
+@Composable
+private fun ReaderScreen(r: ReaderState, vm: MainViewModel) {
+    var showImages by remember(r.email.key) { mutableStateOf(false) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text(r.full?.subject ?: r.email.subject, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text("From: " + (r.full?.from ?: r.email.from), style = MaterialTheme.typography.bodySmall)
+            r.full?.to?.takeIf { it.isNotBlank() }?.let {
+                Text("To: $it", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Text(
+                DateUtils.formatDateTime(
+                    ctx, r.email.dateMillis,
+                    DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_SHOW_YEAR
+                ),
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline
+            )
+            if (r.email.summary.isNotBlank() && r.email.aiSummarized) {
+                Spacer(Modifier.height(6.dp))
+                Text("Summary: " + r.email.summary, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+            }
+            if (r.full?.html != null && !showImages) {
+                TextButton(onClick = { showImages = true }, contentPadding = PaddingValues(0.dp)) {
+                    Text("Show images")
+                }
+            }
+        }
+        HorizontalDivider()
+        when {
+            r.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            r.error != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Text(r.error!!, style = MaterialTheme.typography.bodyMedium)
+            }
+            r.full?.html != null -> EmailWebView(r.full!!.html!!, showImages)
+            else -> SelectionContainer {
+                Text(
+                    r.full?.text.orEmpty().ifBlank { "(This email has no text content)" },
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+/** Renders the email's HTML. Scripts are off, links open in your browser, remote images only on request. */
+@Composable
+private fun EmailWebView(html: String, showImages: Boolean) {
+    AndroidView(
+        modifier = Modifier.fillMaxSize(),
+        factory = { ctx ->
+            WebView(ctx).apply {
+                settings.javaScriptEnabled = false
+                settings.allowFileAccess = false
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+                settings.builtInZoomControls = true
+                settings.displayZoomControls = false
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                        runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, request.url)) }
+                        return true
+                    }
+                }
+            }
+        },
+        update = { web ->
+            val key = "${html.hashCode()}:$showImages"
+            if (web.tag != key) {
+                web.tag = key
+                web.settings.blockNetworkImage = !showImages
+                web.settings.loadsImagesAutomatically = true
+                web.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+            }
+        }
+    )
 }
 
 // ------------------------------------------------------------------ Accounts

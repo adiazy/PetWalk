@@ -5,6 +5,8 @@ import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,13 +15,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
+data class ReaderState(
+    val email: TriagedEmail,
+    val loading: Boolean = true,
+    val full: MailFetcher.FullEmail? = null,
+    val error: String? = null
+)
+
 data class UiState(
     val accounts: List<MailAccount> = emptyList(),
     val settings: AppSettings = AppSettings(),
     val emails: List<TriagedEmail> = emptyList(),
     val refreshing: Boolean = false,
     val status: String = "",
-    val lastRefresh: Long = 0L
+    val lastRefresh: Long = 0L,
+    val reader: ReaderState? = null
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -47,6 +57,88 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun sorted(items: Collection<TriagedEmail>) =
         items.sortedWith(compareBy<TriagedEmail> { it.priority }.thenByDescending { it.dateMillis })
+
+
+    // ---------- Shared helpers ----------
+    private fun accountFor(key: String): MailAccount? =
+        _state.value.accounts.firstOrNull { key.startsWith("${it.id}:") }
+
+    private fun uidFor(key: String): Long = key.substringAfterLast(':').toLong()
+
+    /** App password, or a fresh Microsoft token (saving the refreshed sign-in). */
+    private suspend fun secretFor(acct: MailAccount): String {
+        if (!acct.provider.oauth) return acct.password
+        val (token, newState) = OutlookAuth.freshToken(getApplication(), acct.authStateJson)
+        if (newState != acct.authStateJson) {
+            saveAccounts(_state.value.accounts.map {
+                if (it.id == acct.id) it.copy(authStateJson = newState) else it
+            })
+        }
+        return token
+    }
+
+    // ---------- Reader ----------
+    fun openEmail(e: TriagedEmail) {
+        _state.update { it.copy(reader = ReaderState(e)) }
+        viewModelScope.launch {
+            try {
+                val acct = accountFor(e.key) ?: throw IllegalStateException("Account was removed")
+                val secret = secretFor(acct)
+                val full = withContext(Dispatchers.IO) {
+                    MailFetcher.fetchFull(acct, secret, uidFor(e.key))
+                }
+                _state.update { st ->
+                    if (st.reader?.email?.key == e.key)
+                        st.copy(reader = st.reader!!.copy(loading = false, full = full)) else st
+                }
+            } catch (ex: Exception) {
+                _state.update { st ->
+                    if (st.reader?.email?.key == e.key)
+                        st.copy(reader = st.reader!!.copy(loading = false, error = ex.message ?: "Couldn't open email"))
+                    else st
+                }
+            }
+        }
+    }
+
+    fun closeReader() = _state.update { it.copy(reader = null) }
+
+    // ---------- Delete (moves to the account's Trash, with a short undo window) ----------
+    private val pendingDeletes = mutableMapOf<String, Pair<TriagedEmail, Job>>()
+
+    fun deleteEmail(e: TriagedEmail) {
+        cache.remove(e.key)
+        _state.update { it.copy(emails = sorted(cache.values), reader = null) }
+        val job = viewModelScope.launch {
+            delay(UNDO_WINDOW_MS)
+            try {
+                val acct = accountFor(e.key) ?: return@launch
+                val secret = secretFor(acct)
+                withContext(Dispatchers.IO) { MailFetcher.moveToTrash(acct, secret, uidFor(e.key)) }
+                withContext(Dispatchers.IO) { store.saveCache(cache.values) }
+            } catch (ex: Exception) {
+                // Put it back so nothing silently disappears.
+                cache[e.key] = e
+                _state.update {
+                    it.copy(emails = sorted(cache.values), status = "Couldn't delete: ${ex.message}")
+                }
+            } finally {
+                pendingDeletes.remove(e.key)
+            }
+        }
+        pendingDeletes[e.key] = e to job
+    }
+
+    fun undoDelete(key: String) {
+        val (e, job) = pendingDeletes.remove(key) ?: return
+        job.cancel()
+        cache[key] = e
+        _state.update { it.copy(emails = sorted(cache.values)) }
+    }
+
+    companion object {
+        const val UNDO_WINDOW_MS = 6000L
+    }
 
     // ---------- Settings ----------
     fun saveSettings(s: AppSettings) {
@@ -145,7 +237,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (updatedAccounts != accounts) saveAccounts(updatedAccounts)
 
             // Only send emails we haven't seen before to Claude.
-            val newOnes = fetched.filter { it.key !in cache }
+            val newOnes = fetched.filter { it.key !in cache && it.key !in pendingDeletes }
             if (newOnes.isNotEmpty()) {
                 _state.update { it.copy(status = "Summarizing ${newOnes.size} new emails…") }
                 val triaged = withContext(Dispatchers.IO) {
