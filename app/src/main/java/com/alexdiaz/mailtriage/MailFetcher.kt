@@ -48,7 +48,8 @@ object MailFetcher {
                             from = formatFrom(msg.from),
                             subject = msg.subject ?: "(no subject)",
                             dateMillis = (msg.receivedDate ?: msg.sentDate ?: Date()).time,
-                            body = extractText(msg).take(2000)
+                            body = extractText(msg).take(2000),
+                            unread = !msg.isSet(Flags.Flag.SEEN)
                         )
                     }.getOrNull()
                 }
@@ -71,14 +72,16 @@ object MailFetcher {
         val text: String
     )
 
+    /** Reads the full message and marks it as read on the server. */
     fun fetchFull(account: MailAccount, secret: String, uid: Long): FullEmail {
         val store = connect(account, secret)
         try {
             val inbox = store.getFolder("INBOX") as IMAPFolder
-            inbox.open(Folder.READ_ONLY)
+            inbox.open(Folder.READ_WRITE)
             try {
                 val msg = inbox.getMessageByUID(uid)
                     ?: throw IllegalStateException("This email is no longer in the inbox")
+                runCatching { msg.setFlag(Flags.Flag.SEEN, true) }
                 return FullEmail(
                     from = formatFrom(msg.from),
                     to = msg.getRecipients(Message.RecipientType.TO)
@@ -100,25 +103,52 @@ object MailFetcher {
      * Moves one message from INBOX to the account's Trash folder (recoverable there
      * for the provider's usual period, e.g. 30 days in Gmail).
      */
-    fun moveToTrash(account: MailAccount, secret: String, uid: Long) {
+    fun moveToTrash(account: MailAccount, secret: String, uid: Long) =
+        move(account, secret, uid) { store ->
+            findTrash(store) ?: throw IllegalStateException("Couldn't find the Trash folder")
+        }
+
+    /** Moves one message from INBOX to the folder with this full name. */
+    fun moveToFolder(account: MailAccount, secret: String, uid: Long, folderFullName: String) =
+        move(account, secret, uid) { store ->
+            store.getFolder(folderFullName).takeIf { it.exists() }
+                ?: throw IllegalStateException("Folder \"$folderFullName\" no longer exists")
+        }
+
+    private fun move(account: MailAccount, secret: String, uid: Long, target: (Store) -> Folder) {
         val store = connect(account, secret)
         try {
             val inbox = store.getFolder("INBOX") as IMAPFolder
             inbox.open(Folder.READ_WRITE)
             try {
                 val msg = inbox.getMessageByUID(uid) ?: return   // already gone
-                val trash = findTrash(store)
-                    ?: throw IllegalStateException("Couldn't find the Trash folder")
+                val dest = target(store)
                 try {
-                    inbox.moveMessages(arrayOf(msg), trash)       // IMAP MOVE
+                    inbox.moveMessages(arrayOf(msg), dest)        // IMAP MOVE
                 } catch (e: Exception) {
-                    inbox.copyMessages(arrayOf(msg), trash)       // older servers
+                    inbox.copyMessages(arrayOf(msg), dest)        // older servers
                     msg.setFlag(Flags.Flag.DELETED, true)
                     inbox.expunge(arrayOf(msg))
                 }
             } finally {
                 if (inbox.isOpen) inbox.close(false)
             }
+        } finally {
+            store.close()
+        }
+    }
+
+    /** Folders (Gmail: labels) a message can be moved into, excluding the inbox itself. */
+    fun listFolders(account: MailAccount, secret: String): List<String> {
+        val store = connect(account, secret)
+        try {
+            return store.defaultFolder.list("*")
+                .filter { f ->
+                    !f.fullName.equals("INBOX", ignoreCase = true) &&
+                        runCatching { (f.type and Folder.HOLDS_MESSAGES) != 0 }.getOrDefault(false)
+                }
+                .map { it.fullName }
+                .sortedWith(compareBy<String> { it.startsWith("[") }.thenBy { it.lowercase() })
         } finally {
             store.close()
         }

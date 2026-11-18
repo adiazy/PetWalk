@@ -19,7 +19,9 @@ data class ReaderState(
     val email: TriagedEmail,
     val loading: Boolean = true,
     val full: MailFetcher.FullEmail? = null,
-    val error: String? = null
+    val error: String? = null,
+    val folders: List<String>? = null,     // null = not loaded yet
+    val foldersError: String? = null
 )
 
 data class UiState(
@@ -79,7 +81,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- Reader ----------
     fun openEmail(e: TriagedEmail) {
-        _state.update { it.copy(reader = ReaderState(e)) }
+        if (e.unread) {
+            cache[e.key] = e.copy(unread = false)
+            _state.update { it.copy(emails = sorted(cache.values)) }
+            viewModelScope.launch(Dispatchers.IO) { store.saveCache(cache.values) }
+        }
+        _state.update { it.copy(reader = ReaderState(e.copy(unread = false))) }
         viewModelScope.launch {
             try {
                 val acct = accountFor(e.key) ?: throw IllegalStateException("Account was removed")
@@ -103,10 +110,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeReader() = _state.update { it.copy(reader = null) }
 
-    // ---------- Delete (moves to the account's Trash, with a short undo window) ----------
+    // ---------- Folders ----------
+    private val folderCache = mutableMapOf<String, List<String>>()
+
+    fun loadFolders() {
+        val r = _state.value.reader ?: return
+        val acct = accountFor(r.email.key) ?: return
+        folderCache[acct.id]?.let { f ->
+            _state.update { st -> st.copy(reader = st.reader?.copy(folders = f, foldersError = null)) }
+            return
+        }
+        _state.update { st -> st.copy(reader = st.reader?.copy(folders = null, foldersError = null)) }
+        viewModelScope.launch {
+            try {
+                val secret = secretFor(acct)
+                val list = withContext(Dispatchers.IO) { MailFetcher.listFolders(acct, secret) }
+                folderCache[acct.id] = list
+                _state.update { st -> st.copy(reader = st.reader?.copy(folders = list)) }
+            } catch (ex: Exception) {
+                _state.update { st ->
+                    st.copy(reader = st.reader?.copy(foldersError = ex.message ?: "Couldn't load folders"))
+                }
+            }
+        }
+    }
+
+    // ---------- Delete / move (with a short undo window before touching the server) ----------
     private val pendingDeletes = mutableMapOf<String, Pair<TriagedEmail, Job>>()
 
-    fun deleteEmail(e: TriagedEmail) {
+    fun deleteEmail(e: TriagedEmail) = moveOut(e, null)
+
+    fun moveEmail(e: TriagedEmail, folderFullName: String) = moveOut(e, folderFullName)
+
+    /** folder = null means Trash. */
+    private fun moveOut(e: TriagedEmail, folder: String?) {
         cache.remove(e.key)
         _state.update { it.copy(emails = sorted(cache.values), reader = null) }
         val job = viewModelScope.launch {
@@ -114,13 +151,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val acct = accountFor(e.key) ?: return@launch
                 val secret = secretFor(acct)
-                withContext(Dispatchers.IO) { MailFetcher.moveToTrash(acct, secret, uidFor(e.key)) }
+                withContext(Dispatchers.IO) {
+                    if (folder == null) MailFetcher.moveToTrash(acct, secret, uidFor(e.key))
+                    else MailFetcher.moveToFolder(acct, secret, uidFor(e.key), folder)
+                }
                 withContext(Dispatchers.IO) { store.saveCache(cache.values) }
             } catch (ex: Exception) {
-                // Put it back so nothing silently disappears.
-                cache[e.key] = e
+                cache[e.key] = e   // put it back so nothing silently disappears
                 _state.update {
-                    it.copy(emails = sorted(cache.values), status = "Couldn't delete: ${ex.message}")
+                    it.copy(emails = sorted(cache.values),
+                        status = (if (folder == null) "Couldn't delete: " else "Couldn't move: ") + ex.message)
                 }
             } finally {
                 pendingDeletes.remove(e.key)
@@ -237,6 +277,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (updatedAccounts != accounts) saveAccounts(updatedAccounts)
 
             // Only send emails we haven't seen before to Claude.
+            // Keep read/unread in sync for emails we already have.
+            fetched.forEach { f -> cache[f.key]?.let { c -> if (c.unread != f.unread) cache[f.key] = c.copy(unread = f.unread) } }
             val newOnes = fetched.filter { it.key !in cache && it.key !in pendingDeletes }
             if (newOnes.isNotEmpty()) {
                 _state.update { it.copy(status = "Summarizing ${newOnes.size} new emails…") }

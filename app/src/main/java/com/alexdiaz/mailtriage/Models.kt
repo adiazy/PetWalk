@@ -43,7 +43,8 @@ data class RawEmail(
     val from: String,
     val subject: String,
     val dateMillis: Long,
-    val body: String          // plain text, trimmed
+    val body: String,         // plain text, trimmed
+    val unread: Boolean = false
 )
 
 /** An email after triage. */
@@ -56,12 +57,14 @@ data class TriagedEmail(
     val category: Category,
     val priority: Int,        // 1 (highest) .. 5 (lowest)
     val summary: String,
-    val aiSummarized: Boolean
+    val aiSummarized: Boolean,
+    val unread: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("key", key).put("account", accountEmail).put("from", from)
         .put("subject", subject).put("date", dateMillis).put("category", category.name)
         .put("priority", priority).put("summary", summary).put("ai", aiSummarized)
+        .put("unread", unread)
 
     companion object {
         fun fromJson(o: JSONObject) = TriagedEmail(
@@ -74,7 +77,8 @@ data class TriagedEmail(
                 .getOrDefault(Category.ROUTINE),
             priority = o.optInt("priority", 3),
             summary = o.optString("summary"),
-            aiSummarized = o.optBoolean("ai")
+            aiSummarized = o.optBoolean("ai"),
+            unread = o.optBoolean("unread")
         )
     }
 }

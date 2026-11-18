@@ -44,7 +44,8 @@ object Rules {
         return TriagedEmail(
             key = e.key, accountEmail = e.accountEmail, from = e.from, subject = e.subject,
             dateMillis = e.dateMillis, category = cat, priority = prio,
-            summary = e.body.replace('\n', ' ').take(160), aiSummarized = false
+            summary = e.body.replace('\n', ' ').take(160), aiSummarized = false,
+            unread = e.unread
         )
     }
 }
@@ -143,7 +144,8 @@ class ClaudeTriage(private val apiKey: String, private val model: String) {
                     .getOrDefault(Category.ROUTINE),
                 priority = r.optInt("priority", 3).coerceIn(1, 5),
                 summary = r.optString("summary"),
-                aiSummarized = true
+                aiSummarized = true,
+                unread = e.unread
             )
         }
     }

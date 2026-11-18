@@ -80,6 +80,27 @@ private fun App(vm: MainViewModel = viewModel()) {
         }
     }
 
+    val onMove: (TriagedEmail, String) -> Unit = { e, folder ->
+        vm.moveEmail(e, folder)
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            val r = snackbar.showSnackbar(
+                message = "Moved to ${folderLabel(folder)}", actionLabel = "Undo", duration = SnackbarDuration.Short
+            )
+            if (r == SnackbarResult.ActionPerformed) vm.undoDelete(e.key)
+        }
+    }
+    var showMove by remember { mutableStateOf(false) }
+    if (reader == null) showMove = false
+    if (showMove && reader != null) {
+        MoveDialog(
+            reader = reader,
+            onPick = { folder -> showMove = false; onMove(reader.email, folder) },
+            onRetry = vm::loadFolders,
+            onDismiss = { showMove = false }
+        )
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
@@ -99,6 +120,7 @@ private fun App(vm: MainViewModel = viewModel()) {
                 },
                 actions = {
                     if (reader != null) {
+                        TextButton(onClick = { vm.loadFolders(); showMove = true }) { Text("Move") }
                         TextButton(onClick = { onDelete(reader.email) }) { Text("Delete") }
                     } else if (screen == Screen.INBOX) {
                         TextButton(onClick = { screen = Screen.ACCOUNTS }) { Text("Accounts") }
@@ -124,8 +146,10 @@ private fun App(vm: MainViewModel = viewModel()) {
 @Composable
 private fun InboxScreen(state: UiState, vm: MainViewModel, onDelete: (TriagedEmail) -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
+    var unreadOnly by remember { mutableStateOf(false) }
     val cats = Category.entries
-    val shown = state.emails.filter { it.category == cats[tab] }
+    val visible = if (unreadOnly) state.emails.filter { it.unread } else state.emails
+    val shown = visible.filter { it.category == cats[tab] }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -151,9 +175,19 @@ private fun InboxScreen(state: UiState, vm: MainViewModel, onDelete: (TriagedEma
             }
         }
 
+        Row(
+            Modifier.padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(selected = !unreadOnly, onClick = { unreadOnly = false },
+                label = { Text("All (${state.emails.size})") })
+            FilterChip(selected = unreadOnly, onClick = { unreadOnly = true },
+                label = { Text("Unread (${state.emails.count { it.unread }})") })
+        }
+
         TabRow(selectedTabIndex = tab) {
             cats.forEachIndexed { i, c ->
-                val n = state.emails.count { it.category == c }
+                val n = visible.count { it.category == c }
                 Tab(selected = tab == i, onClick = { tab = i }, text = {
                     Text("${c.name.lowercase().replaceFirstChar { it.uppercase() }} ($n)")
                 })
@@ -164,6 +198,7 @@ private fun InboxScreen(state: UiState, vm: MainViewModel, onDelete: (TriagedEma
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     if (state.accounts.isEmpty()) "Add an account to get started"
+                    else if (unreadOnly) "No unread emails here"
                     else "Nothing here",
                     style = MaterialTheme.typography.bodyLarge
                 )
@@ -197,7 +232,7 @@ private fun EmailCard(e: TriagedEmail, vm: MainViewModel) {
                 Spacer(Modifier.width(8.dp))
                 Text(
                     e.from.substringBefore(" <"),
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = if (e.unread) FontWeight.ExtraBold else FontWeight.Normal,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
@@ -208,7 +243,7 @@ private fun EmailCard(e: TriagedEmail, vm: MainViewModel) {
             }
             Text(
                 e.subject, style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium, maxLines = if (expanded) 4 else 1,
+                fontWeight = if (e.unread) FontWeight.Bold else FontWeight.Normal, maxLines = if (expanded) 4 else 1,
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(Modifier.height(4.dp))
@@ -260,6 +295,47 @@ private fun SwipeToDelete(e: TriagedEmail, onDelete: (TriagedEmail) -> Unit, con
             ) { Text("🗑  Delete", color = Color.White, fontWeight = FontWeight.SemiBold) }
         }
     ) { content() }
+}
+
+private fun folderLabel(full: String) = when {
+    full.equals("[Gmail]/All Mail", true) || full.equals("[Google Mail]/All Mail", true) -> "All Mail (archive)"
+    else -> full.removePrefix("[Gmail]/").removePrefix("[Google Mail]/").removePrefix("INBOX.")
+}
+
+@Composable
+private fun MoveDialog(
+    reader: ReaderState,
+    onPick: (String) -> Unit,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Move to folder") },
+        text = {
+            when {
+                reader.foldersError != null -> Column {
+                    Text(reader.foldersError!!)
+                    TextButton(onClick = onRetry) { Text("Try again") }
+                }
+                reader.folders == null -> Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                reader.folders!!.isEmpty() -> Text("This account has no other folders.")
+                else -> LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    items(reader.folders!!) { f ->
+                        Text(
+                            folderLabel(f),
+                            modifier = Modifier.fillMaxWidth().clickable { onPick(f) }.padding(vertical = 12.dp),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        HorizontalDivider()
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 // ------------------------------------------------------------------ Reader
