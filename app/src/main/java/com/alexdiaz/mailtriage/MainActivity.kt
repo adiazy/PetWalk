@@ -176,12 +176,17 @@ private fun InboxScreen(
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var unreadOnly by remember { mutableStateOf(false) }
+    // Emails you just read stay visible in the Unread view until you switch filters.
+    val justRead = remember { mutableStateListOf<String>() }
     var accountId by remember { mutableStateOf<String?>(null) }     // null = all accounts
     if (accountId != null && state.accounts.none { it.id == accountId }) accountId = null
     val cats = Category.entries
     val inAccount = if (accountId == null) state.emails
         else state.emails.filter { it.key.startsWith("$accountId:") }
-    val visible = if (unreadOnly) inAccount.filter { it.unread } else inAccount
+    val visible = if (unreadOnly) inAccount.filter { it.unread || it.key in justRead } else inAccount
+    val onExpand: (TriagedEmail) -> Unit = { e ->
+        if (e.unread) { if (unreadOnly) justRead += e.key; vm.markRead(e) }
+    }
     val shown = visible.filter { it.category == cats[tab] }
 
     Column(Modifier.fillMaxSize()) {
@@ -212,9 +217,9 @@ private fun InboxScreen(
             Modifier.padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            FilterChip(selected = !unreadOnly, onClick = { unreadOnly = false },
+            FilterChip(selected = !unreadOnly, onClick = { unreadOnly = false; justRead.clear() },
                 label = { Text("All (${inAccount.size})") })
-            FilterChip(selected = unreadOnly, onClick = { unreadOnly = true },
+            FilterChip(selected = unreadOnly, onClick = { unreadOnly = true; justRead.clear() },
                 label = { Text("Unread (${inAccount.count { it.unread }})") })
         }
 
@@ -262,7 +267,7 @@ private fun InboxScreen(
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(shown, key = { it.key }) { email -> SwipeActions(email, onDelete, onArchive) { EmailCard(email, vm, accountColor(state.accounts, email.key)) } }
+                items(shown, key = { it.key }) { email -> SwipeActions(email, onDelete, onArchive) { EmailCard(email, vm, accountColor(state.accounts, email.key), onArchive, onExpand) } }
             }
         }
     }
@@ -281,9 +286,15 @@ private fun priorityColor(p: Int) = when (p) {
 }
 
 @Composable
-private fun EmailCard(e: TriagedEmail, vm: MainViewModel, acctColor: Color) {
+private fun EmailCard(
+    e: TriagedEmail, vm: MainViewModel, acctColor: Color,
+    onArchive: (TriagedEmail) -> Unit, onExpand: (TriagedEmail) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
-    Card(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
+    Card(Modifier.fillMaxWidth().clickable {
+        expanded = !expanded
+        if (expanded) onExpand(e)
+    }) {
       Row(Modifier.height(IntrinsicSize.Min)) {
         Box(Modifier.width(6.dp).fillMaxHeight().background(acctColor))
         Column(Modifier.weight(1f).padding(12.dp)) {
@@ -328,6 +339,7 @@ private fun EmailCard(e: TriagedEmail, vm: MainViewModel, acctColor: Color) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(onClick = { vm.openEmail(e) }) { Text("Open") }
+                    FilledTonalButton(onClick = { onArchive(e) }) { Text("Archive") }
                     Category.entries.filter { it != e.category }.forEach { c ->
                         AssistChip(
                             onClick = { vm.recategorize(e, c) },

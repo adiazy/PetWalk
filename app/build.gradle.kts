@@ -12,8 +12,8 @@ android {
         applicationId = "com.alexdiaz.mailtriage"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.6"
+        versionCode = 8
+        versionName = "1.7"
         // Redirect scheme for Microsoft (Hotmail/Outlook) sign-in.
         // Must match the redirect URI registered in Azure: com.alexdiaz.mailtriage://oauth
         manifestPlaceholders["appAuthRedirectScheme"] = "com.alexdiaz.mailtriage"

@@ -121,6 +121,22 @@ object MailFetcher {
             findTrash(store) ?: throw IllegalStateException("Couldn't find the Trash folder")
         }
 
+    /** Marks one INBOX message read (or unread) on the server. */
+    fun setSeen(account: MailAccount, secret: String, uid: Long, seen: Boolean) {
+        val store = connect(account, secret)
+        try {
+            val inbox = store.getFolder("INBOX") as IMAPFolder
+            inbox.open(Folder.READ_WRITE)
+            try {
+                inbox.getMessageByUID(uid)?.setFlag(Flags.Flag.SEEN, seen)
+            } finally {
+                inbox.close(false)
+            }
+        } finally {
+            store.close()
+        }
+    }
+
     /**
      * Archives one message: Gmail -> All Mail (just removes the Inbox label);
      * Outlook/Yahoo/AOL -> their Archive folder. Creates "Archive" if the account has none.

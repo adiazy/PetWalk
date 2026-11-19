@@ -135,6 +135,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeReader() = _state.update { it.copy(reader = null) }
 
+    /** Called when you expand a preview: marks it read here and on the server. */
+    fun markRead(e: TriagedEmail) {
+        val cur = cache[e.key] ?: return
+        if (!cur.unread) return
+        cache[e.key] = cur.copy(unread = false)
+        _state.update { it.copy(emails = sorted(cache.values)) }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { store.saveCache(cache.values) }
+            try {
+                val acct = accountFor(e.key) ?: return@launch
+                val secret = secretFor(acct)
+                withContext(Dispatchers.IO) { MailFetcher.setSeen(acct, secret, uidFor(e.key), true) }
+            } catch (_: Exception) {
+                // Not critical: the server copy stays unread and the next refresh will show that.
+            }
+        }
+    }
+
     // ---------- Folders ----------
     private val folderCache = mutableMapOf<String, List<String>>()
 
