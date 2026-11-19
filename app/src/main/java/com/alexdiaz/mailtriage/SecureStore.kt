@@ -39,7 +39,9 @@ class SecureStore(context: Context) {
         claudeModel = prefs.getString("claudeModel", "claude-haiku-5-5") ?: "claude-haiku-5-5",
         azureClientId = prefs.getString("azureClientId", "") ?: "",
         daysBack = prefs.getInt("daysBack", 3),
-        maxPerAccount = prefs.getInt("maxPerAccount", 50)
+        maxPerAccount = prefs.getInt("maxPerAccount", 50),
+        autoLearn = prefs.getBoolean("autoLearn", true),
+        learnAfter = prefs.getInt("learnAfter", 2)
     )
 
     fun saveSettings(s: AppSettings) {
@@ -49,6 +51,8 @@ class SecureStore(context: Context) {
             .putString("azureClientId", s.azureClientId.trim())
             .putInt("daysBack", s.daysBack)
             .putInt("maxPerAccount", s.maxPerAccount)
+            .putBoolean("autoLearn", s.autoLearn)
+            .putInt("learnAfter", s.learnAfter)
             .apply()
     }
 
@@ -65,6 +69,20 @@ class SecureStore(context: Context) {
         items.sortedByDescending { it.dateMillis }.take(1000).forEach { arr.put(it.toJson()) }
         prefs.edit().putString("cache", arr.toString())
             .putLong("lastRefresh", System.currentTimeMillis()).apply()
+    }
+
+    // ---- Learned rules ----
+    fun loadRules(): Map<String, LearnedRule> {
+        val arr = JSONArray(prefs.getString("rules", "[]") ?: "[]")
+        return (0 until arr.length())
+            .mapNotNull { runCatching { LearnedRule.fromJson(arr.getJSONObject(it)) }.getOrNull() }
+            .associateBy { it.key }
+    }
+
+    fun saveRules(rules: Collection<LearnedRule>) {
+        val arr = JSONArray()
+        rules.sortedByDescending { it.updated }.take(2000).forEach { arr.put(it.toJson()) }
+        prefs.edit().putString("rules", arr.toString()).apply()
     }
 
     fun lastRefresh(): Long = prefs.getLong("lastRefresh", 0L)

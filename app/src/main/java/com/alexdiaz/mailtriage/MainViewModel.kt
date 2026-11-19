@@ -7,7 +7,10 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -31,8 +34,12 @@ data class UiState(
     val refreshing: Boolean = false,
     val status: String = "",
     val lastRefresh: Long = 0L,
-    val reader: ReaderState? = null
+    val reader: ReaderState? = null,
+    val rules: List<LearnedRule> = emptyList()
 )
+
+/** Emails the app handled on its own during a refresh (shown with an Undo bar). */
+data class AutoEvent(val keys: List<String>, val message: String)
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -43,15 +50,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Emails currently in the inbox, keyed for de-duplication. */
     private var cache: MutableMap<String, TriagedEmail> = mutableMapOf()
 
+    /** Learned rules keyed by sender|subject-pattern. */
+    private var rules: MutableMap<String, LearnedRule> = mutableMapOf()
+
+    private val _events = MutableSharedFlow<AutoEvent>(extraBufferCapacity = 8)
+    val events: SharedFlow<AutoEvent> = _events.asSharedFlow()
+
     init {
         viewModelScope.launch(Dispatchers.IO) {
             cache = store.loadCache().toMutableMap()
+            rules = store.loadRules().toMutableMap()
             _state.update {
                 it.copy(
                     accounts = store.loadAccounts(),
                     settings = store.loadSettings(),
                     emails = sorted(cache.values),
-                    lastRefresh = store.lastRefresh()
+                    lastRefresh = store.lastRefresh(),
+                    rules = sortedRules()
                 )
             }
         }
@@ -143,11 +158,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun moveEmail(e: TriagedEmail, folderFullName: String) = moveOut(e, folderFullName)
 
     /** folder = null means Trash. */
-    private fun moveOut(e: TriagedEmail, folder: String?) {
+    private fun moveOut(
+        e: TriagedEmail, folder: String?,
+        auto: Boolean = false, undoMs: Long = UNDO_WINDOW_MS
+    ) {
         cache.remove(e.key)
-        _state.update { it.copy(emails = sorted(cache.values), reader = null) }
+        _state.update { st ->
+            st.copy(
+                emails = sorted(cache.values),
+                reader = if (st.reader?.email?.key == e.key) null else st.reader
+            )
+        }
         val job = viewModelScope.launch {
-            delay(UNDO_WINDOW_MS)
+            delay(undoMs)
             try {
                 val acct = accountFor(e.key) ?: return@launch
                 val secret = secretFor(acct)
@@ -156,6 +179,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     else MailFetcher.moveToFolder(acct, secret, uidFor(e.key), folder)
                 }
                 withContext(Dispatchers.IO) { store.saveCache(cache.values) }
+                val action = if (folder == null) RuleAction.DELETE else RuleAction.MOVE
+                if (auto) markApplied(e) else learn(e, action, folder = folder.orEmpty())
             } catch (ex: Exception) {
                 cache[e.key] = e   // put it back so nothing silently disappears
                 _state.update {
@@ -178,6 +203,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val UNDO_WINDOW_MS = 6000L
+        const val AUTO_UNDO_WINDOW_MS = 12000L
     }
 
     // ---------- Settings ----------
@@ -280,18 +306,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Keep read/unread in sync for emails we already have.
             fetched.forEach { f -> cache[f.key]?.let { c -> if (c.unread != f.unread) cache[f.key] = c.copy(unread = f.unread) } }
             val newOnes = fetched.filter { it.key !in cache && it.key !in pendingDeletes }
-            if (newOnes.isNotEmpty()) {
-                _state.update { it.copy(status = "Summarizing ${newOnes.size} new emails…") }
+
+            // Learned rules first: deletes/moves skip Claude entirely.
+            val autoOut = mutableListOf<Pair<TriagedEmail, LearnedRule>>()
+            val categoryRules = mutableMapOf<String, LearnedRule>()
+            val toTriage = newOnes.filter { raw ->
+                val r = activeRule(raw)
+                when (r?.action) {
+                    RuleAction.DELETE, RuleAction.MOVE -> { autoOut += Rules.classify(raw) to r!!; false }
+                    RuleAction.CATEGORY -> { categoryRules[raw.key] = r!!; true }
+                    null -> true
+                }
+            }
+
+            if (toTriage.isNotEmpty()) {
+                _state.update { it.copy(status = "Summarizing ${toTriage.size} new emails…") }
                 val triaged = withContext(Dispatchers.IO) {
-                    if (settings.claudeApiKey.isBlank()) newOnes.map(Rules::classify)
+                    if (settings.claudeApiKey.isBlank()) toTriage.map(Rules::classify)
                     else try {
-                        ClaudeTriage(settings.claudeApiKey, settings.claudeModel).triage(newOnes)
+                        ClaudeTriage(settings.claudeApiKey, settings.claudeModel).triage(toTriage)
                     } catch (e: Exception) {
                         errors += "Summaries: ${e.message}"
-                        newOnes.map(Rules::classify)
+                        toTriage.map(Rules::classify)
                     }
                 }
-                triaged.forEach { cache[it.key] = it }
+                triaged.forEach { t ->
+                    val r = categoryRules[t.key]
+                    cache[t.key] = if (r != null) {
+                        rules[r.key]?.let { cur -> rules[r.key] = cur.copy(applied = cur.applied + 1) }
+                        t.copy(category = r.category, priority = priorityFor(r.category, t.priority))
+                    } else t
+                }
+                if (categoryRules.isNotEmpty()) saveRules()
             }
 
             // Drop cached emails that are no longer in the fetched window,
@@ -311,23 +357,97 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     emails = sorted(cache.values),
                     refreshing = false,
                     lastRefresh = System.currentTimeMillis(),
-                    status = if (errors.isEmpty())
+                    status = (if (errors.isEmpty())
                         "${newOnes.size} new · $important important"
-                    else "Some problems:\n" + errors.joinToString("\n")
+                    else "Some problems:\n" + errors.joinToString("\n")) +
+                        (if (autoOut.isNotEmpty()) " · ${autoOut.size} handled by your rules" else "")
                 )
+            }
+
+            if (autoOut.isNotEmpty()) {
+                autoOut.forEach { (e, r) ->
+                    moveOut(e, if (r.action == RuleAction.DELETE) null else r.folder,
+                        auto = true, undoMs = AUTO_UNDO_WINDOW_MS)
+                }
+                val deleted = autoOut.count { it.second.action == RuleAction.DELETE }
+                val moved = autoOut.size - deleted
+                val parts = listOfNotNull(
+                    if (deleted > 0) "$deleted deleted" else null,
+                    if (moved > 0) "$moved moved" else null
+                )
+                _events.tryEmit(AutoEvent(autoOut.map { it.first.key }, "Your rules: " + parts.joinToString(", ")))
             }
         }
     }
 
     /** Lets you correct the category by hand (kept until the email ages out). */
     fun recategorize(email: TriagedEmail, category: Category) {
-        val prio = when (category) {
-            Category.IMPORTANT -> minOf(email.priority, 2)
-            Category.ROUTINE -> 4
-            Category.NOISE -> 5
-        }
-        cache[email.key] = email.copy(category = category, priority = prio)
+        cache[email.key] = email.copy(category = category, priority = priorityFor(category, email.priority))
         store.saveCache(cache.values)
         _state.update { it.copy(emails = sorted(cache.values)) }
+        learn(email, RuleAction.CATEGORY, category = category)
+    }
+
+    // ---------- Learning ----------
+    private fun sortedRules() = rules.values.sortedWith(
+        compareByDescending<LearnedRule> { it.count >= _state.value.settings.learnAfter }.thenByDescending { it.updated }
+    )
+
+    private fun saveRules() {
+        val snapshot = rules.values.toList()
+        viewModelScope.launch(Dispatchers.IO) { store.saveRules(snapshot) }
+        _state.update { it.copy(rules = sortedRules()) }
+    }
+
+    /** Records something you did by hand. Same action again -> count goes up; different -> starts over. */
+    private fun learn(e: TriagedEmail, action: RuleAction, folder: String = "", category: Category = Category.ROUTINE) {
+        if (!_state.value.settings.autoLearn) return
+        val candidate = LearnedRule(
+            sender = Learning.senderOf(e.from),
+            subjectPattern = Learning.patternOf(e.subject),
+            accountId = e.key.substringBefore(':'),
+            action = action, folder = folder, category = category
+        )
+        val existing = rules[candidate.key]
+        rules[candidate.key] = if (existing != null && existing.sameActionAs(candidate))
+            existing.copy(count = existing.count + 1, updated = System.currentTimeMillis())
+        else candidate
+        saveRules()
+    }
+
+    private fun markApplied(e: TriagedEmail) {
+        val k = Learning.keyFor(e.from, e.subject)
+        rules[k]?.let { rules[k] = it.copy(applied = it.applied + 1); saveRules() }
+    }
+
+    /** The rule to apply automatically to this email, if one is active. */
+    private fun activeRule(raw: RawEmail): LearnedRule? {
+        val st = _state.value.settings
+        if (!st.autoLearn) return null
+        val r = rules[Learning.keyFor(raw.from, raw.subject)] ?: return null
+        if (!r.enabled || r.count < st.learnAfter) return null
+        if (r.action == RuleAction.MOVE && r.accountId != raw.key.substringBefore(':')) return null
+        return r
+    }
+
+    fun toggleRule(key: String) {
+        rules[key]?.let { rules[key] = it.copy(enabled = !it.enabled); saveRules() }
+    }
+
+    fun removeRule(key: String) {
+        if (rules.remove(key) != null) saveRules()
+    }
+
+    /** Undo for emails the app handled on its own: restores them and resets the rule. */
+    fun undoAuto(keys: List<String>) {
+        keys.forEach { key ->
+            val e = pendingDeletes[key]?.first
+            undoDelete(key)
+            if (e != null) {
+                val rk = Learning.keyFor(e.from, e.subject)
+                rules[rk]?.let { rules[rk] = it.copy(count = 0, updated = System.currentTimeMillis()) }
+            }
+        }
+        saveRules()
     }
 }

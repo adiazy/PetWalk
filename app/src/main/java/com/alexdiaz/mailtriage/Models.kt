@@ -88,5 +88,7 @@ data class AppSettings(
     val claudeModel: String = "claude-haiku-5-5",
     val azureClientId: String = "",
     val daysBack: Int = 3,
-    val maxPerAccount: Int = 50
+    val maxPerAccount: Int = 50,
+    val autoLearn: Boolean = true,
+    val learnAfter: Int = 2        // same manual action this many times -> rule kicks in
 )

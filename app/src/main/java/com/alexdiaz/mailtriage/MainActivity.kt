@@ -55,7 +55,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { INBOX, ACCOUNTS, SETTINGS }
+private enum class Screen { INBOX, ACCOUNTS, SETTINGS, RULES }
 
 @Composable
 private fun App(vm: MainViewModel = viewModel()) {
@@ -67,7 +67,9 @@ private fun App(vm: MainViewModel = viewModel()) {
     val reader = state.reader
 
     BackHandler(enabled = reader != null) { vm.closeReader() }
-    BackHandler(enabled = reader == null && screen != Screen.INBOX) { screen = Screen.INBOX }
+    BackHandler(enabled = reader == null && screen != Screen.INBOX) {
+        screen = if (screen == Screen.RULES) Screen.SETTINGS else Screen.INBOX
+    }
 
     val onDelete: (TriagedEmail) -> Unit = { e ->
         vm.deleteEmail(e)
@@ -77,6 +79,16 @@ private fun App(vm: MainViewModel = viewModel()) {
                 message = "Moved to Trash", actionLabel = "Undo", duration = SnackbarDuration.Short
             )
             if (r == SnackbarResult.ActionPerformed) vm.undoDelete(e.key)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        vm.events.collect { ev ->
+            snackbar.currentSnackbarData?.dismiss()
+            val r = snackbar.showSnackbar(
+                message = ev.message, actionLabel = "Undo", duration = SnackbarDuration.Long
+            )
+            if (r == SnackbarResult.ActionPerformed) vm.undoAuto(ev.keys)
         }
     }
 
@@ -111,6 +123,7 @@ private fun App(vm: MainViewModel = viewModel()) {
                             Screen.INBOX -> "Mail Triage"
                             Screen.ACCOUNTS -> "Accounts"
                             Screen.SETTINGS -> "Settings"
+                            Screen.RULES -> "Learned rules"
                         }
                     )
                 },
@@ -135,7 +148,8 @@ private fun App(vm: MainViewModel = viewModel()) {
             else when (screen) {
                 Screen.INBOX -> InboxScreen(state, vm, onDelete)
                 Screen.ACCOUNTS -> AccountsScreen(state, vm)
-                Screen.SETTINGS -> SettingsScreen(state, vm)
+                Screen.SETTINGS -> SettingsScreen(state, vm, onOpenRules = { screen = Screen.RULES })
+                Screen.RULES -> RulesScreen(state, vm)
             }
         }
     }
@@ -295,11 +309,6 @@ private fun SwipeToDelete(e: TriagedEmail, onDelete: (TriagedEmail) -> Unit, con
             ) { Text("🗑  Delete", color = Color.White, fontWeight = FontWeight.SemiBold) }
         }
     ) { content() }
-}
-
-private fun folderLabel(full: String) = when {
-    full.equals("[Gmail]/All Mail", true) || full.equals("[Google Mail]/All Mail", true) -> "All Mail (archive)"
-    else -> full.removePrefix("[Gmail]/").removePrefix("[Google Mail]/").removePrefix("INBOX.")
 }
 
 @Composable
@@ -508,15 +517,68 @@ private fun appPasswordHelp(p: Provider) = when (p) {
     else -> "Use your provider's app password if it offers one."
 }
 
+// ------------------------------------------------------------------ Learned rules
+
+@Composable
+private fun RulesScreen(state: UiState, vm: MainViewModel) {
+    val need = state.settings.learnAfter
+    if (state.rules.isEmpty()) {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Text(
+                "Nothing learned yet. Delete, move or re-sort a few emails and the app will start " +
+                    "doing the same for similar ones from that sender.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        return
+    }
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(state.rules, key = { it.key }) { r ->
+            val active = r.enabled && r.count >= need
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(r.describe(), fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        Text(
+                            when {
+                                !r.enabled -> "Paused"
+                                active -> "Active"
+                                else -> "Learning ${r.count}/$need"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (active) Color(0xFF2E7D32) else MaterialTheme.colorScheme.outline
+                        )
+                    }
+                    Text("From: ${r.sender}", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Subject like: ${r.subjectPattern.ifBlank { "(empty)" }}",
+                        style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "Done by you ${r.count}× · by the app ${r.applied}×",
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline
+                    )
+                    Row {
+                        TextButton(onClick = { vm.toggleRule(r.key) }) { Text(if (r.enabled) "Pause" else "Resume") }
+                        TextButton(onClick = { vm.removeRule(r.key) }) { Text("Remove") }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ------------------------------------------------------------------ Settings
 
 @Composable
-private fun SettingsScreen(state: UiState, vm: MainViewModel) {
+private fun SettingsScreen(state: UiState, vm: MainViewModel, onOpenRules: () -> Unit) {
     var key by remember(state.settings) { mutableStateOf(state.settings.claudeApiKey) }
     var model by remember(state.settings) { mutableStateOf(state.settings.claudeModel) }
     var clientId by remember(state.settings) { mutableStateOf(state.settings.azureClientId) }
     var days by remember(state.settings) { mutableStateOf(state.settings.daysBack.toString()) }
     var max by remember(state.settings) { mutableStateOf(state.settings.maxPerAccount.toString()) }
+    var autoLearn by remember(state.settings) { mutableStateOf(state.settings.autoLearn) }
+    var learnAfter by remember(state.settings) { mutableStateOf(state.settings.learnAfter.toString()) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -558,10 +620,31 @@ private fun SettingsScreen(state: UiState, vm: MainViewModel) {
                     claudeModel = model.ifBlank { "claude-haiku-5-5" },
                     azureClientId = clientId,
                     daysBack = days.toIntOrNull()?.coerceIn(1, 30) ?: 3,
-                    maxPerAccount = max.toIntOrNull()?.coerceIn(5, 200) ?: 50
+                    maxPerAccount = max.toIntOrNull()?.coerceIn(5, 200) ?: 50,
+                    autoLearn = autoLearn,
+                    learnAfter = learnAfter.toIntOrNull()?.coerceIn(1, 10) ?: 2
                 )
             )
         }) { Text("Save") }
+
+        HorizontalDivider()
+        Text("Learn from what I do", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "When I delete, move or re-sort an email, do the same for the next one from that sender with a similar subject.",
+                style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            Switch(checked = autoLearn, onCheckedChange = { autoLearn = it })
+        }
+        OutlinedTextField(
+            value = learnAfter, onValueChange = { learnAfter = it.filter(Char::isDigit) },
+            label = { Text("Start after doing it this many times") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        Text("Tap Save after changing these.", style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = onOpenRules) { Text("Learned rules (${state.rules.size})") }
         if (state.status.isNotBlank()) Text(state.status, style = MaterialTheme.typography.bodySmall)
     }
 }
