@@ -144,7 +144,7 @@ private fun App(vm: MainViewModel = viewModel()) {
         }
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
-            if (reader != null) ReaderScreen(reader, vm)
+            if (reader != null) ReaderScreen(reader, vm, accountColor(state.accounts, reader.email.key))
             else when (screen) {
                 Screen.INBOX -> InboxScreen(state, vm, onDelete)
                 Screen.ACCOUNTS -> AccountsScreen(state, vm)
@@ -222,11 +222,15 @@ private fun InboxScreen(state: UiState, vm: MainViewModel, onDelete: (TriagedEma
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(shown, key = { it.key }) { email -> SwipeToDelete(email, onDelete) { EmailCard(email, vm) } }
+                items(shown, key = { it.key }) { email -> SwipeToDelete(email, onDelete) { EmailCard(email, vm, accountColor(state.accounts, email.key)) } }
             }
         }
     }
 }
+
+/** Color of the account an email belongs to (gray if the account was removed). */
+private fun accountColor(accounts: List<MailAccount>, key: String): Color =
+    accounts.firstOrNull { key.startsWith("${it.id}:") }?.let { Color(it.color) } ?: Color(0xFF9E9E9E)
 
 private fun priorityColor(p: Int) = when (p) {
     1 -> Color(0xFFD32F2F)
@@ -237,10 +241,12 @@ private fun priorityColor(p: Int) = when (p) {
 }
 
 @Composable
-private fun EmailCard(e: TriagedEmail, vm: MainViewModel) {
+private fun EmailCard(e: TriagedEmail, vm: MainViewModel, acctColor: Color) {
     var expanded by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
-        Column(Modifier.padding(12.dp)) {
+      Row(Modifier.height(IntrinsicSize.Min)) {
+        Box(Modifier.width(6.dp).fillMaxHeight().background(acctColor))
+        Column(Modifier.weight(1f).padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(10.dp).clip(CircleShape).background(priorityColor(e.priority)))
                 Spacer(Modifier.width(8.dp))
@@ -265,11 +271,16 @@ private fun EmailCard(e: TriagedEmail, vm: MainViewModel) {
                 e.summary, style = MaterialTheme.typography.bodySmall,
                 maxLines = if (expanded) 10 else 2, overflow = TextOverflow.Ellipsis
             )
-            Text(
-                e.accountEmail + if (!e.aiSummarized) " · preview" else "",
-                style = MaterialTheme.typography.labelSmall, fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.outline
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    e.accountEmail, style = MaterialTheme.typography.labelSmall, fontSize = 10.sp,
+                    color = acctColor, fontWeight = FontWeight.SemiBold
+                )
+                if (!e.aiSummarized) Text(
+                    " · preview", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
             if (expanded) {
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
@@ -286,6 +297,7 @@ private fun EmailCard(e: TriagedEmail, vm: MainViewModel) {
                 }
             }
         }
+      }
     }
 }
 
@@ -350,13 +362,19 @@ private fun MoveDialog(
 // ------------------------------------------------------------------ Reader
 
 @Composable
-private fun ReaderScreen(r: ReaderState, vm: MainViewModel) {
+private fun ReaderScreen(r: ReaderState, vm: MainViewModel, acctColor: Color) {
     var showImages by remember(r.email.key) { mutableStateOf(false) }
     val ctx = androidx.compose.ui.platform.LocalContext.current
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             Text(r.full?.subject ?: r.email.subject, style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).clip(CircleShape).background(acctColor))
+                Spacer(Modifier.width(6.dp))
+                Text(r.email.accountEmail, style = MaterialTheme.typography.labelMedium,
+                    color = acctColor, fontWeight = FontWeight.SemiBold)
+            }
             Text("From: " + (r.full?.from ?: r.email.from), style = MaterialTheme.typography.bodySmall)
             r.full?.to?.takeIf { it.isNotBlank() }?.let {
                 Text("To: $it", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -450,14 +468,43 @@ private fun AccountsScreen(state: UiState, vm: MainViewModel) {
         Text("Connected", style = MaterialTheme.typography.titleMedium)
         if (state.accounts.isEmpty()) Text("No accounts yet.")
         state.accounts.forEach { a ->
+            var picking by remember(a.id) { mutableStateOf(false) }
             Card(Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(a.email, fontWeight = FontWeight.SemiBold)
-                        Text(a.provider.label, style = MaterialTheme.typography.labelSmall)
+              Row(Modifier.height(IntrinsicSize.Min)) {
+                Box(Modifier.width(6.dp).fillMaxHeight().background(Color(a.color)))
+                Column(Modifier.weight(1f).padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(28.dp).clip(CircleShape).background(Color(a.color))
+                                .clickable { picking = !picking }
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(a.email, fontWeight = FontWeight.SemiBold)
+                            Text(a.provider.label + " · tap the circle to change color",
+                                style = MaterialTheme.typography.labelSmall)
+                        }
+                        TextButton(onClick = { vm.removeAccount(a) }) { Text("Remove") }
                     }
-                    TextButton(onClick = { vm.removeAccount(a) }) { Text("Remove") }
+                    if (picking) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            AccountColors.palette.forEach { c ->
+                                val selected = c == a.color
+                                Box(
+                                    Modifier.size(if (selected) 34.dp else 28.dp).clip(CircleShape)
+                                        .background(Color(c))
+                                        .clickable { vm.setAccountColor(a.id, c); picking = false },
+                                    contentAlignment = Alignment.Center
+                                ) { if (selected) Text("✓", color = Color.White, fontWeight = FontWeight.Bold) }
+                            }
+                        }
+                    }
                 }
+              }
             }
         }
 

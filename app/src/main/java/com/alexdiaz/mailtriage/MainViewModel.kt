@@ -60,9 +60,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             cache = store.loadCache().toMutableMap()
             rules = store.loadRules().toMutableMap()
+            var accts = store.loadAccounts()
+            if (accts.any { it.color == 0L }) {           // give existing accounts a color once
+                val used = mutableListOf<Long>()
+                accts = accts.map { a ->
+                    val c = if (a.color != 0L) a.color else AccountColors.next(used + accts.map { it.color })
+                    used += c
+                    a.copy(color = c)
+                }
+                store.saveAccounts(accts)
+            }
             _state.update {
                 it.copy(
-                    accounts = store.loadAccounts(),
+                    accounts = accts,
                     settings = store.loadSettings(),
                     emails = sorted(cache.values),
                     lastRefresh = store.lastRefresh(),
@@ -219,7 +229,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             provider = provider,
             email = email.trim(),
             host = host.trim().ifBlank { provider.host },
-            password = password.replace(" ", "")   // app passwords are often shown with spaces
+            password = password.replace(" ", ""),  // app passwords are often shown with spaces
+            color = AccountColors.next(_state.value.accounts.map { it.color })
         )
         saveAccounts(_state.value.accounts + acct)
     }
@@ -246,7 +257,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     provider = Provider.OUTLOOK,
                     email = email.trim(),
                     host = Provider.OUTLOOK.host,
-                    authStateJson = authJson
+                    authStateJson = authJson,
+                    color = AccountColors.next(_state.value.accounts.map { it.color })
                 )
                 saveAccounts(_state.value.accounts + acct)
                 _state.update { it.copy(status = "Added ${acct.email}") }
@@ -254,6 +266,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(status = "Microsoft sign-in failed: ${e.message}") }
             }
         }
+    }
+
+    fun setAccountColor(id: String, color: Long) {
+        saveAccounts(_state.value.accounts.map { if (it.id == id) it.copy(color = color) else it })
     }
 
     fun removeAccount(acct: MailAccount) {

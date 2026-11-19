@@ -16,11 +16,13 @@ data class MailAccount(
     val email: String,
     val host: String,
     val password: String = "",          // app password (non-OAuth providers)
-    val authStateJson: String = ""      // AppAuth state (Outlook)
+    val authStateJson: String = "",     // AppAuth state (Outlook)
+    val color: Long = 0L                // ARGB; 0 = not chosen yet
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("provider", provider.name).put("email", email)
         .put("host", host).put("password", password).put("authState", authStateJson)
+        .put("color", color)
 
     companion object {
         fun fromJson(o: JSONObject) = MailAccount(
@@ -29,7 +31,8 @@ data class MailAccount(
             email = o.getString("email"),
             host = o.optString("host"),
             password = o.optString("password"),
-            authStateJson = o.optString("authState")
+            authStateJson = o.optString("authState"),
+            color = o.optLong("color", 0L)
         )
     }
 }
@@ -91,3 +94,25 @@ data class AppSettings(
     val autoLearn: Boolean = true,
     val learnAfter: Int = 2        // same manual action this many times -> rule kicks in
 )
+
+/** Distinct colors for accounts (kept away from the red/orange/yellow priority dots). */
+object AccountColors {
+    val palette: List<Long> = listOf(
+        0xFF1E88E5, // blue
+        0xFF43A047, // green
+        0xFF8E24AA, // purple
+        0xFF00897B, // teal
+        0xFFD81B60, // pink
+        0xFF3949AB, // indigo
+        0xFF6D4C41, // brown
+        0xFF00ACC1, // cyan
+        0xFF7CB342, // lime
+        0xFF546E7A, // slate
+        0xFFF4511E, // deep orange
+        0xFF5E35B1  // deep purple
+    )
+
+    /** First palette color no other account is using (cycles if all are taken). */
+    fun next(used: Collection<Long>): Long =
+        palette.firstOrNull { it !in used } ?: palette[used.size % palette.size]
+}
