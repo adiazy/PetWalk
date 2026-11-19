@@ -38,8 +38,7 @@ class SecureStore(context: Context) {
         claudeApiKey = prefs.getString("claudeKey", "") ?: "",
         claudeModel = prefs.getString("claudeModel", "claude-haiku-5-5") ?: "claude-haiku-5-5",
         azureClientId = prefs.getString("azureClientId", "") ?: "",
-        daysBack = prefs.getInt("daysBack", 3),
-        maxPerAccount = prefs.getInt("maxPerAccount", 50),
+        maxPerAccount = prefs.getInt("perAccount", 200),
         autoLearn = prefs.getBoolean("autoLearn", true),
         learnAfter = prefs.getInt("learnAfter", 2)
     )
@@ -49,8 +48,7 @@ class SecureStore(context: Context) {
             .putString("claudeKey", s.claudeApiKey.trim())
             .putString("claudeModel", s.claudeModel.trim())
             .putString("azureClientId", s.azureClientId.trim())
-            .putInt("daysBack", s.daysBack)
-            .putInt("maxPerAccount", s.maxPerAccount)
+            .putInt("perAccount", s.maxPerAccount)
             .putBoolean("autoLearn", s.autoLearn)
             .putInt("learnAfter", s.learnAfter)
             .apply()

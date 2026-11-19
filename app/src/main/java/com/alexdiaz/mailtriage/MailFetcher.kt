@@ -12,8 +12,8 @@ import javax.mail.Session
 import javax.mail.Store
 import javax.mail.Flags
 import javax.mail.internet.InternetAddress
-import javax.mail.search.ComparisonTerm
-import javax.mail.search.ReceivedDateTerm
+import javax.mail.FetchProfile
+import javax.mail.UIDFolder
 
 /**
  * Reads recent INBOX messages over IMAP (read-only: it never moves, deletes or
@@ -24,35 +24,49 @@ object MailFetcher {
     /**
      * @param secret app password, or an OAuth access token for Outlook (XOAUTH2).
      */
+    /**
+     * Returns the newest [maxMessages] emails in INBOX, whatever their date. As you delete
+     * or move emails, older ones move up into this window on the next refresh.
+     * Bodies are only downloaded for emails not in [knownKeys] (already triaged).
+     */
     fun fetch(
         account: MailAccount,
         secret: String,
-        daysBack: Int,
-        maxMessages: Int
+        maxMessages: Int,
+        knownKeys: Set<String>
     ): List<RawEmail> {
         val store = connect(account, secret)
         try {
             val inbox = store.getFolder("INBOX") as IMAPFolder
             inbox.open(Folder.READ_ONLY)
             try {
-                val since = Date(System.currentTimeMillis() - daysBack * 24L * 3600_000L)
-                val messages = inbox.search(ReceivedDateTerm(ComparisonTerm.GE, since))
-                    .sortedByDescending { it.receivedDate ?: it.sentDate ?: Date(0) }
-                    .take(maxMessages)
+                val total = inbox.messageCount
+                if (total <= 0) return emptyList()
+                val first = maxOf(1, total - maxMessages + 1)
+                val messages = inbox.getMessages(first, total)
+
+                // One round trip for headers, flags and UIDs instead of one per email.
+                val fp = FetchProfile().apply {
+                    add(FetchProfile.Item.ENVELOPE)
+                    add(FetchProfile.Item.FLAGS)
+                    add(UIDFolder.FetchProfileItem.UID)
+                }
+                inbox.fetch(messages, fp)
 
                 return messages.mapNotNull { msg ->
                     runCatching {
+                        val key = "${account.id}:${inbox.getUID(msg)}"
                         RawEmail(
-                            key = "${account.id}:${inbox.getUID(msg)}",
+                            key = key,
                             accountEmail = account.email,
                             from = formatFrom(msg.from),
                             subject = msg.subject ?: "(no subject)",
                             dateMillis = (msg.receivedDate ?: msg.sentDate ?: Date()).time,
-                            body = extractText(msg).take(2000),
+                            body = if (key in knownKeys) "" else extractText(msg).take(2000),
                             unread = !msg.isSet(Flags.Flag.SEEN)
                         )
                     }.getOrNull()
-                }
+                }.sortedByDescending { it.dateMillis }
             } finally {
                 inbox.close(false)
             }
@@ -60,7 +74,6 @@ object MailFetcher {
             store.close()
         }
     }
-
 
     /** Full content of one message, for the reader screen. */
     data class FullEmail(

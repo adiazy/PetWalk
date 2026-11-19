@@ -575,7 +575,6 @@ private fun SettingsScreen(state: UiState, vm: MainViewModel, onOpenRules: () ->
     var key by remember(state.settings) { mutableStateOf(state.settings.claudeApiKey) }
     var model by remember(state.settings) { mutableStateOf(state.settings.claudeModel) }
     var clientId by remember(state.settings) { mutableStateOf(state.settings.azureClientId) }
-    var days by remember(state.settings) { mutableStateOf(state.settings.daysBack.toString()) }
     var max by remember(state.settings) { mutableStateOf(state.settings.maxPerAccount.toString()) }
     var autoLearn by remember(state.settings) { mutableStateOf(state.settings.autoLearn) }
     var learnAfter by remember(state.settings) { mutableStateOf(state.settings.learnAfter.toString()) }
@@ -601,26 +600,24 @@ private fun SettingsScreen(state: UiState, vm: MainViewModel, onOpenRules: () ->
             value = clientId, onValueChange = { clientId = it }, label = { Text("Azure client ID (for Hotmail/Outlook)") },
             singleLine = true, modifier = Modifier.fillMaxWidth()
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(
-                value = days, onValueChange = { days = it.filter(Char::isDigit) },
-                label = { Text("Days back") }, singleLine = true, modifier = Modifier.weight(1f),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-            )
-            OutlinedTextField(
-                value = max, onValueChange = { max = it.filter(Char::isDigit) },
-                label = { Text("Max per account") }, singleLine = true, modifier = Modifier.weight(1f),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-            )
-        }
+        OutlinedTextField(
+            value = max, onValueChange = { max = it.filter(Char::isDigit) },
+            label = { Text("Newest emails to load per account") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        Text(
+            "When you delete or move emails, older ones fill the list on the next refresh. " +
+                "Claude summarizes each email only once.",
+            style = MaterialTheme.typography.bodySmall
+        )
         Button(onClick = {
             vm.saveSettings(
                 AppSettings(
                     claudeApiKey = key,
                     claudeModel = model.ifBlank { "claude-haiku-5-5" },
                     azureClientId = clientId,
-                    daysBack = days.toIntOrNull()?.coerceIn(1, 30) ?: 3,
-                    maxPerAccount = max.toIntOrNull()?.coerceIn(5, 200) ?: 50,
+                    maxPerAccount = max.toIntOrNull()?.coerceIn(10, 1000) ?: 200,
                     autoLearn = autoLearn,
                     learnAfter = learnAfter.toIntOrNull()?.coerceIn(1, 10) ?: 2
                 )

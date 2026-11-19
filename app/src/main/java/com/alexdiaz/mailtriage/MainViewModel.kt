@@ -293,8 +293,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         token
                     } else acct.password
 
+                    val known = cache.keys.toSet() + pendingDeletes.keys
                     fetched += withContext(Dispatchers.IO) {
-                        MailFetcher.fetch(acct, secret, settings.daysBack, settings.maxPerAccount)
+                        MailFetcher.fetch(acct, secret, settings.maxPerAccount, known)
                     }
                 } catch (e: Exception) {
                     errors += "${acct.email}: ${e.message ?: e.javaClass.simpleName}"
