@@ -2,7 +2,7 @@ package com.alexdiaz.mailtriage
 
 import org.json.JSONObject
 
-enum class RuleAction { DELETE, MOVE, CATEGORY }
+enum class RuleAction { DELETE, ARCHIVE, MOVE, CATEGORY }
 
 /**
  * Something the app learned from what you did by hand, keyed by sender address +
@@ -28,6 +28,7 @@ data class LearnedRule(
 
     fun describe(): String = when (action) {
         RuleAction.DELETE -> "Delete"
+        RuleAction.ARCHIVE -> "Archive"
         RuleAction.MOVE -> "Move to ${folderLabel(folder)}"
         RuleAction.CATEGORY -> "Mark as ${category.name.lowercase().replaceFirstChar { it.uppercase() }}"
     }

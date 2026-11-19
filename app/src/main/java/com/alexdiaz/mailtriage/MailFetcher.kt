@@ -121,6 +121,27 @@ object MailFetcher {
             findTrash(store) ?: throw IllegalStateException("Couldn't find the Trash folder")
         }
 
+    /**
+     * Archives one message: Gmail -> All Mail (just removes the Inbox label);
+     * Outlook/Yahoo/AOL -> their Archive folder. Creates "Archive" if the account has none.
+     */
+    fun archive(account: MailAccount, secret: String, uid: Long) =
+        move(account, secret, uid) { store -> findOrCreateArchive(store) }
+
+    private fun findOrCreateArchive(store: Store): Folder {
+        val all = store.defaultFolder.list("*")
+        fun attrs(f: Folder) = (f as? IMAPFolder)?.attributes?.toList().orEmpty()
+        // RFC 6154 special-use flags: \Archive first, then Gmail's \All (All Mail)
+        all.firstOrNull { f -> attrs(f).any { it.equals("\\Archive", true) } }?.let { return it }
+        all.firstOrNull { f -> attrs(f).any { it.equals("\\All", true) } }?.let { return it }
+        val names = listOf("[Gmail]/All Mail", "[Google Mail]/All Mail", "Archive", "Archives",
+            "INBOX.Archive", "Archivo", "[Gmail]/Todos")
+        for (n in names) all.firstOrNull { it.fullName.equals(n, ignoreCase = true) }?.let { return it }
+        val created = store.getFolder("Archive")
+        if (!created.exists()) created.create(Folder.HOLDS_MESSAGES)
+        return created
+    }
+
     /** Moves one message from INBOX to the folder with this full name. */
     fun moveToFolder(account: MailAccount, secret: String, uid: Long, folderFullName: String) =
         move(account, secret, uid) { store ->

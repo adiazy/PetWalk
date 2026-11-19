@@ -163,13 +163,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Delete / move (with a short undo window before touching the server) ----------
     private val pendingDeletes = mutableMapOf<String, Pair<TriagedEmail, Job>>()
 
-    fun deleteEmail(e: TriagedEmail) = moveOut(e, null)
+    fun deleteEmail(e: TriagedEmail) = moveOut(e, RuleAction.DELETE)
 
-    fun moveEmail(e: TriagedEmail, folderFullName: String) = moveOut(e, folderFullName)
+    fun archiveEmail(e: TriagedEmail) = moveOut(e, RuleAction.ARCHIVE)
 
-    /** folder = null means Trash. */
+    fun moveEmail(e: TriagedEmail, folderFullName: String) = moveOut(e, RuleAction.MOVE, folderFullName)
+
+    /** Takes the email out of the inbox: DELETE = Trash, ARCHIVE = archive folder, MOVE = [folder]. */
     private fun moveOut(
-        e: TriagedEmail, folder: String?,
+        e: TriagedEmail, action: RuleAction, folder: String = "",
         auto: Boolean = false, undoMs: Long = UNDO_WINDOW_MS
     ) {
         cache.remove(e.key)
@@ -184,18 +186,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val acct = accountFor(e.key) ?: return@launch
                 val secret = secretFor(acct)
+                val uid = uidFor(e.key)
                 withContext(Dispatchers.IO) {
-                    if (folder == null) MailFetcher.moveToTrash(acct, secret, uidFor(e.key))
-                    else MailFetcher.moveToFolder(acct, secret, uidFor(e.key), folder)
+                    when (action) {
+                        RuleAction.DELETE -> MailFetcher.moveToTrash(acct, secret, uid)
+                        RuleAction.ARCHIVE -> MailFetcher.archive(acct, secret, uid)
+                        RuleAction.MOVE -> MailFetcher.moveToFolder(acct, secret, uid, folder)
+                        RuleAction.CATEGORY -> Unit
+                    }
                 }
                 withContext(Dispatchers.IO) { store.saveCache(cache.values) }
-                val action = if (folder == null) RuleAction.DELETE else RuleAction.MOVE
-                if (auto) markApplied(e) else learn(e, action, folder = folder.orEmpty())
+                if (auto) markApplied(e) else learn(e, action, folder = folder)
             } catch (ex: Exception) {
                 cache[e.key] = e   // put it back so nothing silently disappears
                 _state.update {
                     it.copy(emails = sorted(cache.values),
-                        status = (if (folder == null) "Couldn't delete: " else "Couldn't move: ") + ex.message)
+                        status = when (action) {
+                            RuleAction.DELETE -> "Couldn't delete: "
+                            RuleAction.ARCHIVE -> "Couldn't archive: "
+                            else -> "Couldn't move: "
+                        } + ex.message)
                 }
             } finally {
                 pendingDeletes.remove(e.key)
@@ -330,7 +340,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val toTriage = newOnes.filter { raw ->
                 val r = activeRule(raw)
                 when (r?.action) {
-                    RuleAction.DELETE, RuleAction.MOVE -> { autoOut += Rules.classify(raw) to r!!; false }
+                    RuleAction.DELETE, RuleAction.ARCHIVE, RuleAction.MOVE -> { autoOut += Rules.classify(raw) to r!!; false }
                     RuleAction.CATEGORY -> { categoryRules[raw.key] = r!!; true }
                     null -> true
                 }
@@ -383,13 +393,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
             if (autoOut.isNotEmpty()) {
                 autoOut.forEach { (e, r) ->
-                    moveOut(e, if (r.action == RuleAction.DELETE) null else r.folder,
-                        auto = true, undoMs = AUTO_UNDO_WINDOW_MS)
+                    moveOut(e, r.action, r.folder, auto = true, undoMs = AUTO_UNDO_WINDOW_MS)
                 }
                 val deleted = autoOut.count { it.second.action == RuleAction.DELETE }
-                val moved = autoOut.size - deleted
+                val archived = autoOut.count { it.second.action == RuleAction.ARCHIVE }
+                val moved = autoOut.size - deleted - archived
                 val parts = listOfNotNull(
                     if (deleted > 0) "$deleted deleted" else null,
+                    if (archived > 0) "$archived archived" else null,
                     if (moved > 0) "$moved moved" else null
                 )
                 _events.tryEmit(AutoEvent(autoOut.map { it.first.key }, "Your rules: " + parts.joinToString(", ")))

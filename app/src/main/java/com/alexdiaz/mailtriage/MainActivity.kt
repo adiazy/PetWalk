@@ -71,6 +71,17 @@ private fun App(vm: MainViewModel = viewModel()) {
         screen = if (screen == Screen.RULES) Screen.SETTINGS else Screen.INBOX
     }
 
+    val onArchive: (TriagedEmail) -> Unit = { e ->
+        vm.archiveEmail(e)
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            val r = snackbar.showSnackbar(
+                message = "Archived", actionLabel = "Undo", duration = SnackbarDuration.Short
+            )
+            if (r == SnackbarResult.ActionPerformed) vm.undoDelete(e.key)
+        }
+    }
+
     val onDelete: (TriagedEmail) -> Unit = { e ->
         vm.deleteEmail(e)
         scope.launch {
@@ -118,7 +129,7 @@ private fun App(vm: MainViewModel = viewModel()) {
         topBar = {
             TopAppBar(
                 title = {
-                    if (reader != null) Text("Email") else Text(
+                    if (reader != null) Text("") else Text(
                         when (screen) {
                             Screen.INBOX -> "Mail Triage"
                             Screen.ACCOUNTS -> "Accounts"
@@ -134,6 +145,7 @@ private fun App(vm: MainViewModel = viewModel()) {
                 actions = {
                     if (reader != null) {
                         TextButton(onClick = { vm.loadFolders(); showMove = true }) { Text("Move") }
+                        TextButton(onClick = { onArchive(reader.email) }) { Text("Archive") }
                         TextButton(onClick = { onDelete(reader.email) }) { Text("Delete") }
                     } else if (screen == Screen.INBOX) {
                         TextButton(onClick = { screen = Screen.ACCOUNTS }) { Text("Accounts") }
@@ -146,7 +158,7 @@ private fun App(vm: MainViewModel = viewModel()) {
         Box(Modifier.padding(pad).fillMaxSize()) {
             if (reader != null) ReaderScreen(reader, vm, accountColor(state.accounts, reader.email.key))
             else when (screen) {
-                Screen.INBOX -> InboxScreen(state, vm, onDelete)
+                Screen.INBOX -> InboxScreen(state, vm, onDelete, onArchive)
                 Screen.ACCOUNTS -> AccountsScreen(state, vm)
                 Screen.SETTINGS -> SettingsScreen(state, vm, onOpenRules = { screen = Screen.RULES })
                 Screen.RULES -> RulesScreen(state, vm)
@@ -158,11 +170,18 @@ private fun App(vm: MainViewModel = viewModel()) {
 // ------------------------------------------------------------------ Inbox
 
 @Composable
-private fun InboxScreen(state: UiState, vm: MainViewModel, onDelete: (TriagedEmail) -> Unit) {
+private fun InboxScreen(
+    state: UiState, vm: MainViewModel,
+    onDelete: (TriagedEmail) -> Unit, onArchive: (TriagedEmail) -> Unit
+) {
     var tab by remember { mutableIntStateOf(0) }
     var unreadOnly by remember { mutableStateOf(false) }
+    var accountId by remember { mutableStateOf<String?>(null) }     // null = all accounts
+    if (accountId != null && state.accounts.none { it.id == accountId }) accountId = null
     val cats = Category.entries
-    val visible = if (unreadOnly) state.emails.filter { it.unread } else state.emails
+    val inAccount = if (accountId == null) state.emails
+        else state.emails.filter { it.key.startsWith("$accountId:") }
+    val visible = if (unreadOnly) inAccount.filter { it.unread } else inAccount
     val shown = visible.filter { it.category == cats[tab] }
 
     Column(Modifier.fillMaxSize()) {
@@ -194,9 +213,30 @@ private fun InboxScreen(state: UiState, vm: MainViewModel, onDelete: (TriagedEma
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             FilterChip(selected = !unreadOnly, onClick = { unreadOnly = false },
-                label = { Text("All (${state.emails.size})") })
+                label = { Text("All (${inAccount.size})") })
             FilterChip(selected = unreadOnly, onClick = { unreadOnly = true },
-                label = { Text("Unread (${state.emails.count { it.unread }})") })
+                label = { Text("Unread (${inAccount.count { it.unread }})") })
+        }
+
+        if (state.accounts.size > 1) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(selected = accountId == null, onClick = { accountId = null },
+                    label = { Text("All accounts") })
+                state.accounts.forEach { a ->
+                    val n = state.emails.count { it.key.startsWith("${a.id}:") }
+                    FilterChip(
+                        selected = accountId == a.id,
+                        onClick = { accountId = if (accountId == a.id) null else a.id },
+                        leadingIcon = {
+                            Box(Modifier.size(10.dp).clip(CircleShape).background(Color(a.color)))
+                        },
+                        label = { Text("${a.email.substringBefore('@')} ($n)") }
+                    )
+                }
+            }
         }
 
         TabRow(selectedTabIndex = tab) {
@@ -222,7 +262,7 @@ private fun InboxScreen(state: UiState, vm: MainViewModel, onDelete: (TriagedEma
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(shown, key = { it.key }) { email -> SwipeToDelete(email, onDelete) { EmailCard(email, vm, accountColor(state.accounts, email.key)) } }
+                items(shown, key = { it.key }) { email -> SwipeActions(email, onDelete, onArchive) { EmailCard(email, vm, accountColor(state.accounts, email.key)) } }
             }
         }
     }
@@ -302,23 +342,44 @@ private fun EmailCard(e: TriagedEmail, vm: MainViewModel, acctColor: Color) {
 }
 
 @Composable
-private fun SwipeToDelete(e: TriagedEmail, onDelete: (TriagedEmail) -> Unit, content: @Composable () -> Unit) {
+private fun SwipeActions(
+    e: TriagedEmail,
+    onDelete: (TriagedEmail) -> Unit,
+    onArchive: (TriagedEmail) -> Unit,
+    content: @Composable () -> Unit
+) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.StartToEnd) { onDelete(e); true } else false
+            when (value) {
+                SwipeToDismissBoxValue.StartToEnd -> { onDelete(e); true }    // swipe right
+                SwipeToDismissBoxValue.EndToStart -> { onArchive(e); true }   // swipe left
+                else -> false
+            }
         },
         positionalThreshold = { total -> total * 0.4f }
     )
     SwipeToDismissBox(
         state = dismissState,
         enableDismissFromStartToEnd = true,
-        enableDismissFromEndToStart = false,
+        enableDismissFromEndToStart = true,
         backgroundContent = {
+            val toRight = dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd
+            val toLeft = dismissState.dismissDirection == SwipeToDismissBoxValue.EndToStart
             Box(
                 Modifier.fillMaxSize().clip(MaterialTheme.shapes.medium)
-                    .background(Color(0xFFD32F2F)).padding(horizontal = 20.dp),
-                contentAlignment = Alignment.CenterStart
-            ) { Text("🗑  Delete", color = Color.White, fontWeight = FontWeight.SemiBold) }
+                    .background(
+                        when {
+                            toRight -> Color(0xFFD32F2F)
+                            toLeft -> Color(0xFF2E7D32)
+                            else -> Color.Transparent
+                        }
+                    )
+                    .padding(horizontal = 20.dp),
+                contentAlignment = if (toLeft) Alignment.CenterEnd else Alignment.CenterStart
+            ) {
+                if (toRight) Text("🗑  Delete", color = Color.White, fontWeight = FontWeight.SemiBold)
+                if (toLeft) Text("Archive  📥", color = Color.White, fontWeight = FontWeight.SemiBold)
+            }
         }
     ) { content() }
 }
