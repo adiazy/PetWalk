@@ -113,6 +113,7 @@ private fun PlayerContent(
                     Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> { vm.togglePlay(); true }
                     Key.MediaFastForward -> { vm.seekBy(10_000); true }
                     Key.MediaRewind -> { vm.seekBy(-10_000); true }
+                    Key.MediaNext -> { vm.playNextRandom(); true }
                     else -> false
                 }
             }
@@ -133,7 +134,11 @@ private fun PlayerContent(
                 Text(song.artist ?: "", style = MaterialTheme.typography.titleMedium, color = Pink)
             }
             val lyricsSource = (vm.lyrics as? LyricsState.Found)?.lyrics?.source
-            val mode = if (song.uri == null) "Lyrics-only mode · " else ""
+            val mode = when {
+                song.uri == null -> "Lyrics-only mode · "
+                vm.randomScope != null -> "🔀 Random: ${vm.randomScope} · "
+                else -> ""
+            }
             Text("$mode${lyricsSource?.let { "Lyrics: $it" } ?: ""}", color = Color.White.copy(alpha = 0.5f))
         }
 
@@ -156,6 +161,9 @@ private fun PlayerContent(
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = vm::togglePlay, modifier = Modifier.focusRequester(playFocus)) {
                 Text(if (playing) "❚❚ Pause" else "▶ Play")
+            }
+            if (vm.randomScope != null) {
+                Button(onClick = vm::playNextRandom) { Text("Next ⏭") }
             }
             Button(onClick = { vm.seekBy(-10_000) }) { Text("⟲ 10s") }
             Button(onClick = { vm.seekBy(10_000) }) { Text("10s ⟳") }

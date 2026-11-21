@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.tv.material3.Button
 import androidx.tv.material3.Card
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -84,18 +85,29 @@ fun LibraryBrowser(vm: KaraokeViewModel) {
     }
 
     Column {
-        Text(
-            listOfNotNull("Artists", artist?.name, album?.name.takeIf { artist != null && artist.albums.size > 1 })
-                .joinToString("  ›  "),
-            style = MaterialTheme.typography.titleMedium,
-            color = Pink,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(bottom = 12.dp),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
+            Text(
+                listOfNotNull("Artists", artist?.name, album?.name.takeIf { artist != null && artist.albums.size > 1 })
+                    .joinToString("  ›  "),
+                style = MaterialTheme.typography.titleMedium,
+                color = Pink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            // Random play of whatever is on screen: everything, this artist, or this album.
+            val (scopeSongs, scopeName) = when {
+                album != null -> album.songs to album.name
+                artist != null -> artist.albums.flatMap { it.songs } to artist.name
+                else -> vm.library to "all songs"
+            }
+            Button(onClick = { vm.playRandom(scopeSongs, scopeName) }) {
+                Text(if (artist == null) "🔀 Random" else "🔀 Random from ${if (album != null) "album" else "artist"}")
+            }
+        }
         when {
             artist == null -> ArtistGrid(vm, tree)
-            album == null -> AlbumGrid(vm, artist)
+            album == null -> AlbumList(vm, artist)
             else -> SongList(vm, artist, album)
         }
     }
@@ -132,7 +144,7 @@ private fun ArtistGrid(vm: KaraokeViewModel, tree: List<ArtistNode<Song>>) {
                     vm.focusedSong = null
                     vm.libraryFocusRequest = true
                     scope.launch {
-                        vm.albumGridState.scrollToItem(0)
+                        vm.albumListState.scrollToItem(0)
                         vm.songListState.scrollToItem(0)
                     }
                 },
@@ -141,36 +153,46 @@ private fun ArtistGrid(vm: KaraokeViewModel, tree: List<ArtistNode<Song>>) {
     }
 }
 
+/** An artist's albums as a compact text list (no cover pictures): name, year and song count. */
 @Composable
-private fun AlbumGrid(vm: KaraokeViewModel, artist: ArtistNode<Song>) {
+private fun AlbumList(vm: KaraokeViewModel, artist: ArtistNode<Song>) {
     val scope = rememberCoroutineScope()
     val keys = remember(artist) { artist.albums.map { albumKey(it.name) } }
-    val focus = levelFocus(vm, keys, vm.focusedAlbum) { index -> vm.albumGridState.reveal(index) }
+    val focus = levelFocus(vm, keys, vm.focusedAlbum) { index ->
+        if (vm.albumListState.layoutInfo.visibleItemsInfo.none { it.index == index }) vm.albumListState.scrollToItem(index)
+    }
 
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(TILE_WIDTH),
-        state = vm.albumGridState,
-        horizontalArrangement = Arrangement.spacedBy(TILE_GAP),
-        verticalArrangement = Arrangement.spacedBy(TILE_GAP),
-        contentPadding = PaddingValues(bottom = 32.dp),
+    LazyColumn(
+        state = vm.albumListState,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        contentPadding = PaddingValues(bottom = 24.dp),
     ) {
         items(artist.albums, key = { albumKey(it.name) }) { node ->
             val key = albumKey(node.name)
-            ArtTile(
-                title = node.name,
-                subtitle = listOfNotNull(node.year?.toString(), songs(node.songs.size)).joinToString(" · "),
-                imageKey = "album:${artist.name}/${node.name}",
-                load = { vm.art.album(artist.name, node) },
-                modifier = Modifier
-                    .focusRequester(focus(key))
-                    .onFocusChanged { if (it.isFocused) vm.focusedAlbum = key },
+            CompactRow(
                 onClick = {
                     vm.browseAlbum = node.name
                     vm.focusedSong = null
                     vm.libraryFocusRequest = true
                     scope.launch { vm.songListState.scrollToItem(0) }
                 },
-            )
+                modifier = Modifier
+                    .focusRequester(focus(key))
+                    .onFocusChanged { if (it.isFocused) vm.focusedAlbum = key },
+            ) {
+                Text(
+                    node.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    listOfNotNull(node.year?.toString(), songs(node.songs.size)).joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.5f),
+                )
+            }
         }
     }
 }

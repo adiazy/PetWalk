@@ -31,7 +31,10 @@ path (`\\server\share\folder` or `smb://server/share/folder`) and, if the share 
 username and password (`DOMAIN\user` works too). You can also hide music stored on the TV itself.
 
 - Songs stream directly from the share, so seeking works and nothing is copied to the TV.
-- My music is a picture menu: **Artists → Albums → Songs**. Artists are grouped by the *album
+- **🔀 Random** (top right of My music) plays songs in random order, one after another, from what's
+  on screen: the whole library, the open artist or the open album. No repeats until all have
+  played; **Next ⏭** (or the remote's next key) skips, Back stops.
+- My music is a menu: **Artist pictures → Albums (list) → Songs**. Artists are grouped by the *album
   artist* tag, then the artist folder, then the artist tag; spellings like "&"/"and", case and
   accents are merged. Albums are ordered by year, songs by disc and track number. Back goes up a
   level. Artists with one album go straight to its songs.

@@ -158,6 +158,8 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 // Ready means the file's tags and length are known: the best moment to search.
                 if (playbackState == Player.STATE_READY) playerReady?.complete(Unit)
+                // Random play: when a song finishes, go straight to the next one.
+                if (playbackState == Player.STATE_ENDED && randomQueue.isNotEmpty()) playNextRandom()
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -346,7 +348,44 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         play(Song(id = "url:$url", title = title.trim(), artist = artist?.trim(), uri = Uri.parse(url.trim())))
     }
 
-    fun play(song: Song) {
+    // ---- Random play ----
+
+    private var randomQueue: List<Song> = emptyList()
+    private var randomIndex = 0
+
+    /** What random play is shuffling ("all songs", an artist or an album), or null when off. */
+    var randomScope by mutableStateOf<String?>(null)
+        private set
+
+    /** Plays [songs] in random order, one after another; no repeats until all have played. */
+    fun playRandom(songs: List<Song>, scope: String) {
+        val playable = songs.filter { it.uri != null }
+        if (playable.isEmpty()) return
+        randomQueue = playable.shuffled()
+        randomIndex = 0
+        randomScope = scope
+        play(randomQueue[0], fromRandom = true)
+    }
+
+    fun playNextRandom() {
+        if (randomQueue.isEmpty()) return
+        randomIndex++
+        if (randomIndex >= randomQueue.size) {
+            // Played them all: shuffle again, avoiding the song that just played coming first.
+            val last = randomQueue.last()
+            randomQueue = randomQueue.shuffled().let { if (it.size > 1 && it.first() == last) it.drop(1) + it.first() else it }
+            randomIndex = 0
+        }
+        play(randomQueue[randomIndex], fromRandom = true)
+    }
+
+    private fun stopRandom() {
+        randomQueue = emptyList()
+        randomScope = null
+    }
+
+    fun play(song: Song, fromRandom: Boolean = false) {
+        if (!fromRandom) stopRandom()
         nowPlaying = song
         lyricOffsetMs = 0
         manualResults = emptyList()
@@ -499,7 +538,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     /** Album picked within [browseArtist], or null for that artist's album grid. */
     var browseAlbum by mutableStateOf<String?>(null)
     val artistGridState = LazyGridState()
-    val albumGridState = LazyGridState()
+    val albumListState = LazyListState()
     val songListState = LazyListState()
     /** Last focused item on each level, to put focus back when returning to it. */
     var focusedArtist: String? = null
@@ -614,6 +653,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stop() {
+        stopRandom()
         libraryFocusRequest = true
         lyricsJob?.cancel()
         player.stop()
