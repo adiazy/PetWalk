@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -97,19 +98,27 @@ fun PlayerScreen(vm: KaraokeViewModel) {
                 ),
             )
         }
-        PlayerContent(
-            vm, song, position, playing, duration, searchingByHand, { searchingByHand = it }, playFocus,
-            browsing = browsing,
-            onBrowse = {
-                vm.libraryFocusRequest = true
-                browsing = true
-            },
-            browseButtonFocus = browseButtonFocus,
-        )
-        if (browsing) {
-            NextSongPanel(vm) {
-                browsing = false
-                refocusBrowseButton = true
+        // While picking the next song, the screen splits: lyrics (drawn smaller) on the left,
+        // the song menu on the right, so the current song stays readable.
+        Row(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                Scaled(if (browsing) LYRICS_SCALE_WHILE_PICKING else 1f) {
+                    PlayerContent(
+                        vm, song, position, playing, duration, searchingByHand, { searchingByHand = it }, playFocus,
+                        browsing = browsing,
+                        onBrowse = {
+                            vm.libraryFocusRequest = true
+                            browsing = true
+                        },
+                        browseButtonFocus = browseButtonFocus,
+                    )
+                }
+            }
+            if (browsing) {
+                NextSongPanel(vm, Modifier.fillMaxWidth(PANEL_WIDTH).fillMaxHeight()) {
+                    browsing = false
+                    refocusBrowseButton = true
+                }
             }
         }
     }
@@ -123,36 +132,43 @@ fun PlayerScreen(vm: KaraokeViewModel) {
     }
 }
 
+/** Draws [content] at [scale] of its normal size (text, spacing and buttons together). */
+@Composable
+private fun Scaled(scale: Float, content: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    CompositionLocalProvider(LocalDensity provides Density(density.density * scale, density.fontScale), content = content)
+}
+
+private const val PANEL_WIDTH = 0.38f
+private const val PANEL_SCALE = 0.85f
+private const val LYRICS_SCALE_WHILE_PICKING = 0.8f
+
 /**
- * The song menu over the right side of the karaoke screen; the song keeps playing. Selecting a
- * song adds it to Up next. Back goes up a level, and closes the panel from the artist grid.
+ * The song menu in a column on the right of the karaoke screen; the song keeps playing. Selecting
+ * a song adds it to Up next. Back goes up a level, and closes the panel from the artist grid.
  */
 @Composable
-private fun NextSongPanel(vm: KaraokeViewModel, onClose: () -> Unit) {
+private fun NextSongPanel(vm: KaraokeViewModel, modifier: Modifier, onClose: () -> Unit) {
     BackHandler { onClose() } // composed before the browser, so the browser's levels win first
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
-        Column(
-            Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(0.62f)
-                .background(Color.Black.copy(alpha = 0.9f))
-                .padding(horizontal = 24.dp, vertical = 20.dp),
-        ) {
-            Text("Pick the next song", style = MaterialTheme.typography.titleLarge, color = Color.White)
-            Text(
-                "It plays when this one ends, or press Next ⏭. Back closes this menu.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.6f),
-                modifier = Modifier.padding(bottom = 12.dp),
-            )
-            LibraryBrowser(
-                vm,
-                onSong = { song ->
-                    vm.queueNext(song)
-                    onClose()
-                },
-                showRandomButton = false,
-            )
+    Box(modifier.background(Color.Black.copy(alpha = 0.85f))) {
+        Scaled(PANEL_SCALE) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 20.dp)) {
+                Text("Pick the next song", style = MaterialTheme.typography.titleLarge, color = Color.White)
+                Text(
+                    "It plays when this one ends, or press Next ⏭. Back closes this menu.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                LibraryBrowser(
+                    vm,
+                    onSong = { song ->
+                        vm.queueNext(song)
+                        onClose()
+                    },
+                    compact = true,
+                )
+            }
         }
     }
 }

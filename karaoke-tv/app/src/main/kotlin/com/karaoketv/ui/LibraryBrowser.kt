@@ -65,7 +65,8 @@ fun LibraryBrowser(
     vm: KaraokeViewModel,
     /** What selecting a song does: play it now (My music) or queue it (karaoke screen). */
     onSong: (Song) -> Unit = { vm.play(it) },
-    showRandomButton: Boolean = true,
+    /** For the narrow menu on the karaoke screen: no Random button, no big album cover. */
+    compact: Boolean = false,
 ) {
     val tree = vm.libraryTree
     val artist = vm.browseArtist?.let { name -> tree.firstOrNull { it.name == name } }
@@ -106,7 +107,7 @@ fun LibraryBrowser(
                 artist != null -> artist.albums.flatMap { it.songs } to artist.name
                 else -> vm.library to "all songs"
             }
-            if (showRandomButton) {
+            if (!compact) {
                 Button(onClick = { vm.playRandom(scopeSongs, scopeName) }) {
                     Text(if (artist == null) "🔀 Random" else "🔀 Random from ${if (album != null) "album" else "artist"}")
                 }
@@ -115,7 +116,7 @@ fun LibraryBrowser(
         when {
             artist == null -> ArtistGrid(vm, tree)
             album == null -> AlbumList(vm, artist)
-            else -> SongList(vm, artist, album, onSong)
+            else -> SongList(vm, artist, album, onSong, showCover = !compact)
         }
     }
 }
@@ -205,26 +206,36 @@ private fun AlbumList(vm: KaraokeViewModel, artist: ArtistNode<Song>) {
 }
 
 @Composable
-private fun SongList(vm: KaraokeViewModel, artist: ArtistNode<Song>, album: AlbumNode<Song>, onSong: (Song) -> Unit) {
+private fun SongList(
+    vm: KaraokeViewModel,
+    artist: ArtistNode<Song>,
+    album: AlbumNode<Song>,
+    onSong: (Song) -> Unit,
+    showCover: Boolean,
+) {
     val keys = remember(album) { album.songs.map { it.id } }
     val focus = levelFocus(vm, keys, vm.focusedSong) { index ->
         if (vm.songListState.layoutInfo.visibleItemsInfo.none { it.index == index }) vm.songListState.scrollToItem(index)
     }
-    val cover by produceState<ImageBitmap?>(null, artist.name, album.name) { value = vm.art.albumCover(artist.name, album) }
+    val cover by produceState<ImageBitmap?>(null, artist.name, album.name, showCover) {
+        if (showCover) value = vm.art.albumCover(artist.name, album)
+    }
 
     Row {
-        Column(Modifier.width(220.dp)) {
-            CoverBox(cover, album.name, Modifier.size(220.dp), initialsSize = 40.sp)
-            Spacer(Modifier.height(12.dp))
-            Text(album.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(artist.name, style = MaterialTheme.typography.bodyMedium, color = Pink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                listOfNotNull(album.year?.toString(), songs(album.songs.size)).joinToString(" · "),
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White.copy(alpha = 0.6f),
-            )
+        if (showCover) {
+            Column(Modifier.width(220.dp)) {
+                CoverBox(cover, album.name, Modifier.size(220.dp), initialsSize = 40.sp)
+                Spacer(Modifier.height(12.dp))
+                Text(album.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(artist.name, style = MaterialTheme.typography.bodyMedium, color = Pink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    listOfNotNull(album.year?.toString(), songs(album.songs.size)).joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.6f),
+                )
+            }
+            Spacer(Modifier.width(24.dp))
         }
-        Spacer(Modifier.width(24.dp))
         LazyColumn(
             state = vm.songListState,
             verticalArrangement = Arrangement.spacedBy(2.dp),
