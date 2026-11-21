@@ -38,8 +38,12 @@ class ArtLoader(
     }
     private val missing = Collections.synchronizedSet(HashSet<String>())
 
+    // Pictures for what's on screen never wait behind the background downloads.
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val io = Dispatchers.IO.limitedParallelism(3)
+    private val io = Dispatchers.IO.limitedParallelism(4)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val backgroundIo = Dispatchers.IO.limitedParallelism(2)
 
     fun clear() {
         memory.evictAll()
@@ -48,6 +52,10 @@ class ArtLoader(
 
     suspend fun album(artist: String, album: AlbumNode<Song>): ImageBitmap? =
         load(albumKey(artist, album)) { findAlbumArt(album.songs) }
+
+    /** The album cover at a size for the large picture beside the song list. */
+    suspend fun albumCover(artist: String, album: AlbumNode<Song>): ImageBitmap? =
+        load(albumKey(artist, album), sizePx = THUMB_PX) { findAlbumArt(album.songs) }
 
     suspend fun artist(artist: ArtistNode<Song>): ImageBitmap? =
         load(artistKey(artist)) {
@@ -81,7 +89,7 @@ class ArtLoader(
         return runCatching { smb.readBytes(thumb) }.getOrNull()?.let { Artwork.decode(it, THUMB_PX) }
     }
 
-    private suspend fun prefetch(key: String, find: suspend () -> ImageBitmap?): Boolean = withContext(io) {
+    private suspend fun prefetch(key: String, find: suspend () -> ImageBitmap?): Boolean = withContext(backgroundIo) {
         if (memory.get(key) != null) return@withContext true
         val smb = connection() ?: return@withContext false
         val thumb = thumbPath(key) ?: return@withContext false
@@ -95,14 +103,16 @@ class ArtLoader(
         found != null
     }
 
-    private suspend fun load(key: String, find: suspend () -> ImageBitmap?): ImageBitmap? {
-        memory.get(key)?.let { return it }
+    /** [sizePx]: the size kept in memory (small for tiles, larger for the song list's cover). */
+    private suspend fun load(key: String, sizePx: Int = MENU_PX, find: suspend () -> ImageBitmap?): ImageBitmap? {
+        val memoryKey = "$key@$sizePx"
+        memory.get(memoryKey)?.let { return it }
         if (key in missing) return null
         val image = withContext(io) {
             val smb = connection()
             val thumb = thumbPath(key)
             if (smb != null && thumb != null) {
-                runCatching { smb.readBytes(thumb) }.getOrNull()?.let { bytes -> Artwork.decode(bytes, THUMB_PX) }
+                runCatching { smb.readBytes(thumb) }.getOrNull()?.let { bytes -> Artwork.decode(bytes, sizePx) }
                     ?.let { return@withContext it }
             }
             val found = runCatching { find() }.getOrNull() ?: return@withContext null
@@ -113,10 +123,19 @@ class ArtLoader(
                     smb.delete(noneMarker(thumb)) // a picture was added since the last look
                 }
             }
-            found
+            shrink(found, sizePx)
         }
-        if (image == null) missing += key else memory.put(key, image)
+        if (image == null) missing += key else memory.put(memoryKey, image)
         return image
+    }
+
+    private fun shrink(image: ImageBitmap, maxPx: Int): ImageBitmap {
+        val bitmap = image.asAndroidBitmap()
+        val longest = maxOf(bitmap.width, bitmap.height)
+        if (longest <= maxPx) return image
+        val scale = maxPx.toFloat() / longest
+        return Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1), true)
+            .asImageBitmap()
     }
 
     private fun findAlbumArt(songs: List<Song>): ImageBitmap? {
@@ -171,6 +190,8 @@ class ArtLoader(
 
     private companion object {
         const val THUMB_PX = 400
+        /** Size kept in memory for the menus: the tiles are small, so more pictures stay cached. */
+        const val MENU_PX = 200
         val MEMORY_BYTES = minOf(48L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 8).toInt()
         const val EMBEDDED_TRIES = 3
         val ARTIST_IMAGES = listOf("artist.jpg", "artist.png", "photo.jpg", "band.jpg")

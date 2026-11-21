@@ -62,7 +62,7 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun LibraryBrowser(vm: KaraokeViewModel) {
-    val tree = remember(vm.library) { LibraryTree.build(vm.library) { it.treeInfo() } }
+    val tree = vm.libraryTree
     val artist = vm.browseArtist?.let { name -> tree.firstOrNull { it.name == name } }
     val album = artist?.let { a -> vm.browseAlbum?.let { name -> a.albums.firstOrNull { it.name == name } } }
 
@@ -203,7 +203,7 @@ private fun SongList(vm: KaraokeViewModel, artist: ArtistNode<Song>, album: Albu
     val focus = levelFocus(vm, keys, vm.focusedSong) { index ->
         if (vm.songListState.layoutInfo.visibleItemsInfo.none { it.index == index }) vm.songListState.scrollToItem(index)
     }
-    val cover by produceState<ImageBitmap?>(null, artist.name, album.name) { value = vm.art.album(artist.name, album) }
+    val cover by produceState<ImageBitmap?>(null, artist.name, album.name) { value = vm.art.albumCover(artist.name, album) }
 
     Row {
         Column(Modifier.width(220.dp)) {
@@ -310,10 +310,10 @@ private fun levelFocus(
     reveal: suspend (Int) -> Unit,
 ): (String) -> FocusRequester {
     val requesters = remember { HashMap<String, FocusRequester>() }
-    LaunchedEffect(Unit) {
-        if (!vm.libraryFocusRequest) return@LaunchedEffect
+    LaunchedEffect(keys.isNotEmpty()) {
+        if (!vm.libraryFocusRequest || keys.isEmpty()) return@LaunchedEffect
         vm.libraryFocusRequest = false
-        val key = saved?.takeIf { it in keys } ?: keys.firstOrNull() ?: return@LaunchedEffect
+        val key = saved?.takeIf { it in keys } ?: keys.first()
         reveal(keys.indexOf(key))
         withFrameNanos { } // let the item be laid out before focusing it
         runCatching { requesters.getOrPut(key) { FocusRequester() }.requestFocus() }

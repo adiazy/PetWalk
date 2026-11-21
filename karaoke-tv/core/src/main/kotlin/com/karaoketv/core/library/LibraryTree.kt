@@ -71,12 +71,17 @@ object LibraryTree {
             return ""
         }
         return Normalizer.normalize(trimmed.lowercase(), Normalizer.Form.NFD)
-            .replace(Regex("""\p{M}+"""), "")
+            .replace(ACCENTS, "")
             .replace("&", " and ")
             .replace("+", " and ")
-            .replace(Regex("""^the\s+"""), "")
-            .replace(Regex("""[^\p{L}\p{N}]+"""), "")
+            .replace(LEADING_THE, "")
+            .replace(NOT_LETTER_OR_DIGIT, "")
     }
+
+    // Compiled once: key() runs for every song's artist and album on each rebuild.
+    private val ACCENTS = Regex("""\p{M}+""")
+    private val LEADING_THE = Regex("""^the\s+""")
+    private val NOT_LETTER_OR_DIGIT = Regex("""[^\p{L}\p{N}]+""")
 
     private fun sortName(name: String) = name.lowercase().removePrefix("the ").trim()
 

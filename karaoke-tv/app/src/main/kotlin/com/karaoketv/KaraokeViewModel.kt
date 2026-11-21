@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -26,6 +27,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.karaoketv.core.library.ArtistNode
 import com.karaoketv.core.library.LibraryTree
 import com.karaoketv.core.library.MissLog
 import com.karaoketv.core.library.SmbLocation
@@ -58,6 +60,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -109,6 +112,21 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var libraryError by mutableStateOf<String?>(null)
         private set
+
+    /**
+     * My music grouped as Artist → Album → Songs. Built off the main thread whenever the library
+     * changes and kept here, so coming back from a song doesn't regroup thousands of songs.
+     */
+    var libraryTree by mutableStateOf<List<ArtistNode<Song>>>(emptyList())
+        private set
+
+    init {
+        viewModelScope.launch {
+            snapshotFlow { library }.collectLatest { songs ->
+                libraryTree = withContext(Dispatchers.Default) { LibraryTree.build(songs) { it.treeInfo() } }
+            }
+        }
+    }
 
     var searchResults by mutableStateOf<List<LrcLibTrack>>(emptyList())
         private set
@@ -606,7 +624,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { runCatching { misses?.save() } }
             }
 
-            val tree = LibraryTree.build(library) { it.treeInfo() }
+            val tree = libraryTree
             for ((i, artist) in tree.withIndex()) {
                 backgroundStatus = "Background: pictures for artist ${i + 1} of ${tree.size}"
                 for (album in artist.albums) art.prefetchAlbum(artist.name, album)
