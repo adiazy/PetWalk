@@ -31,6 +31,10 @@ path (`\\server\share\folder` or `smb://server/share/folder`) and, if the share 
 username and password (`DOMAIN\user` works too). You can also hide music stored on the TV itself.
 
 - Songs stream directly from the share, so seeking works and nothing is copied to the TV.
+- On the karaoke screen, **🎵 Pick next song** opens the song menu over the lyrics while the song
+  keeps playing; picked songs go into **Up next** and play when the current one ends (or with
+  **Next ⏭**). **🔀 Random: On** continues with random songs from the whole library after the
+  current one; picked songs come first.
 - **🔀 Random** (top right of My music) plays songs in random order, one after another, from what's
   on screen: the whole library, the open artist or the open album. No repeats until all have
   played; **Next ⏭** (or the remote's next key) skips, Back stops.

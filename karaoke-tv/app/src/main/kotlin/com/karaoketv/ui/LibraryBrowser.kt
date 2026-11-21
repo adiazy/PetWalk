@@ -61,7 +61,12 @@ import kotlinx.coroutines.launch
  * album go straight to its songs.
  */
 @Composable
-fun LibraryBrowser(vm: KaraokeViewModel) {
+fun LibraryBrowser(
+    vm: KaraokeViewModel,
+    /** What selecting a song does: play it now (My music) or queue it (karaoke screen). */
+    onSong: (Song) -> Unit = { vm.play(it) },
+    showRandomButton: Boolean = true,
+) {
     val tree = vm.libraryTree
     val artist = vm.browseArtist?.let { name -> tree.firstOrNull { it.name == name } }
     val album = artist?.let { a -> vm.browseAlbum?.let { name -> a.albums.firstOrNull { it.name == name } } }
@@ -101,14 +106,16 @@ fun LibraryBrowser(vm: KaraokeViewModel) {
                 artist != null -> artist.albums.flatMap { it.songs } to artist.name
                 else -> vm.library to "all songs"
             }
-            Button(onClick = { vm.playRandom(scopeSongs, scopeName) }) {
-                Text(if (artist == null) "🔀 Random" else "🔀 Random from ${if (album != null) "album" else "artist"}")
+            if (showRandomButton) {
+                Button(onClick = { vm.playRandom(scopeSongs, scopeName) }) {
+                    Text(if (artist == null) "🔀 Random" else "🔀 Random from ${if (album != null) "album" else "artist"}")
+                }
             }
         }
         when {
             artist == null -> ArtistGrid(vm, tree)
             album == null -> AlbumList(vm, artist)
-            else -> SongList(vm, artist, album)
+            else -> SongList(vm, artist, album, onSong)
         }
     }
 }
@@ -198,7 +205,7 @@ private fun AlbumList(vm: KaraokeViewModel, artist: ArtistNode<Song>) {
 }
 
 @Composable
-private fun SongList(vm: KaraokeViewModel, artist: ArtistNode<Song>, album: AlbumNode<Song>) {
+private fun SongList(vm: KaraokeViewModel, artist: ArtistNode<Song>, album: AlbumNode<Song>, onSong: (Song) -> Unit) {
     val keys = remember(album) { album.songs.map { it.id } }
     val focus = levelFocus(vm, keys, vm.focusedSong) { index ->
         if (vm.songListState.layoutInfo.visibleItemsInfo.none { it.index == index }) vm.songListState.scrollToItem(index)
@@ -226,7 +233,7 @@ private fun SongList(vm: KaraokeViewModel, artist: ArtistNode<Song>, album: Albu
         ) {
             items(album.songs, key = { it.id }) { song ->
                 CompactRow(
-                    onClick = { vm.play(song) },
+                    onClick = { onSong(song) },
                     modifier = Modifier
                         .focusRequester(focus(song.id))
                         .onFocusChanged { if (it.isFocused) vm.focusedSong = song.id },

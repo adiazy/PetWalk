@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -177,7 +178,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
                 // Ready means the file's tags and length are known: the best moment to search.
                 if (playbackState == Player.STATE_READY) playerReady?.complete(Unit)
                 // Random play: when a song finishes, go straight to the next one.
-                if (playbackState == Player.STATE_ENDED && randomQueue.isNotEmpty()) playNextRandom()
+                if (playbackState == Player.STATE_ENDED && hasNext) playNext()
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -400,6 +401,39 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
     private fun stopRandom() {
         randomQueue = emptyList()
         randomScope = null
+    }
+
+    // ---- Up next (picked on the karaoke screen) ----
+
+    /** Songs picked to play after the current one, in order. They come before random songs. */
+    val upNext = mutableStateListOf<Song>()
+
+    val hasNext get() = upNext.isNotEmpty() || randomScope != null
+
+    fun queueNext(song: Song) {
+        if (song.uri != null) upNext.add(song)
+    }
+
+    /** The next picked song, else the next random one. Keeps random play on. */
+    fun playNext() {
+        val picked = upNext.removeFirstOrNull()
+        if (picked != null) play(picked, fromRandom = true) else playNextRandom()
+    }
+
+    /**
+     * Random play from the karaoke screen: turns it on for after the current song (whole library,
+     * without interrupting what's playing), or off.
+     */
+    fun setRandomAfterCurrent(on: Boolean) {
+        if (!on) {
+            stopRandom()
+            return
+        }
+        val current = nowPlaying?.id
+        randomQueue = library.filter { it.uri != null && it.id != current }.shuffled()
+        if (randomQueue.isEmpty()) return
+        randomIndex = -1 // playNextRandom() moves to the first one
+        randomScope = "all songs"
     }
 
     fun play(song: Song, fromRandom: Boolean = false) {
@@ -672,6 +706,7 @@ class KaraokeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stop() {
         stopRandom()
+        upNext.clear()
         libraryFocusRequest = true
         lyricsJob?.cancel()
         player.stop()

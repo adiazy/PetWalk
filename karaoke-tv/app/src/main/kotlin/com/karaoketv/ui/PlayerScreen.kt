@@ -2,11 +2,14 @@ package com.karaoketv.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -25,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,7 +77,10 @@ fun PlayerScreen(vm: KaraokeViewModel) {
     }
 
     var searchingByHand by remember(song.id) { mutableStateOf(false) }
+    var browsing by remember { mutableStateOf(false) }
+    var refocusBrowseButton by remember { mutableStateOf(false) }
     val playFocus = remember { FocusRequester() }
+    val browseButtonFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
 
     val look = LocalAppearance.current
@@ -89,7 +97,63 @@ fun PlayerScreen(vm: KaraokeViewModel) {
                 ),
             )
         }
-        PlayerContent(vm, song, position, playing, duration, searchingByHand, { searchingByHand = it }, playFocus)
+        PlayerContent(
+            vm, song, position, playing, duration, searchingByHand, { searchingByHand = it }, playFocus,
+            browsing = browsing,
+            onBrowse = {
+                vm.libraryFocusRequest = true
+                browsing = true
+            },
+            browseButtonFocus = browseButtonFocus,
+        )
+        if (browsing) {
+            NextSongPanel(vm) {
+                browsing = false
+                refocusBrowseButton = true
+            }
+        }
+    }
+
+    // Closing the panel puts focus back on its button (once the buttons are enabled again).
+    LaunchedEffect(refocusBrowseButton) {
+        if (!refocusBrowseButton) return@LaunchedEffect
+        withFrameNanos { }
+        runCatching { browseButtonFocus.requestFocus() }
+        refocusBrowseButton = false
+    }
+}
+
+/**
+ * The song menu over the right side of the karaoke screen; the song keeps playing. Selecting a
+ * song adds it to Up next. Back goes up a level, and closes the panel from the artist grid.
+ */
+@Composable
+private fun NextSongPanel(vm: KaraokeViewModel, onClose: () -> Unit) {
+    BackHandler { onClose() } // composed before the browser, so the browser's levels win first
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
+        Column(
+            Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(0.62f)
+                .background(Color.Black.copy(alpha = 0.9f))
+                .padding(horizontal = 24.dp, vertical = 20.dp),
+        ) {
+            Text("Pick the next song", style = MaterialTheme.typography.titleLarge, color = Color.White)
+            Text(
+                "It plays when this one ends, or press Next ⏭. Back closes this menu.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
+            LibraryBrowser(
+                vm,
+                onSong = { song ->
+                    vm.queueNext(song)
+                    onClose()
+                },
+                showRandomButton = false,
+            )
+        }
     }
 }
 
@@ -103,7 +167,12 @@ private fun PlayerContent(
     searchingByHand: Boolean,
     setSearchingByHand: (Boolean) -> Unit,
     playFocus: FocusRequester,
+    browsing: Boolean,
+    onBrowse: () -> Unit,
+    browseButtonFocus: FocusRequester,
 ) {
+    // While the song menu is open, these controls step aside so the remote stays in the menu.
+    val enabled = !browsing
     Column(
         Modifier
             .fillMaxSize()
@@ -113,7 +182,7 @@ private fun PlayerContent(
                     Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> { vm.togglePlay(); true }
                     Key.MediaFastForward -> { vm.seekBy(10_000); true }
                     Key.MediaRewind -> { vm.seekBy(-10_000); true }
-                    Key.MediaNext -> { vm.playNextRandom(); true }
+                    Key.MediaNext -> { if (vm.hasNext) vm.playNext(); true }
                     else -> false
                 }
             }
@@ -139,7 +208,18 @@ private fun PlayerContent(
                 vm.randomScope != null -> "🔀 Random: ${vm.randomScope} · "
                 else -> ""
             }
-            Text("$mode${lyricsSource?.let { "Lyrics: $it" } ?: ""}", color = Color.White.copy(alpha = 0.5f))
+            Column(horizontalAlignment = Alignment.End) {
+                Text("$mode${lyricsSource?.let { "Lyrics: $it" } ?: ""}", color = Color.White.copy(alpha = 0.5f))
+                val next = vm.upNext.firstOrNull()
+                when {
+                    next != null -> Text(
+                        "Up next: ${next.title}" + (if (vm.upNext.size > 1) "  (+${vm.upNext.size - 1} more)" else ""),
+                        color = Gold,
+                        maxLines = 1,
+                    )
+                    vm.randomScope != null -> Text("Next: random", color = Gold)
+                }
+            }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -158,25 +238,40 @@ private fun PlayerContent(
         vm.playbackError?.let { Text("Playback error: $it", color = Pink) }
         ProgressBar(position, duration)
         Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = vm::togglePlay, modifier = Modifier.focusRequester(playFocus)) {
+        // Scrolls sideways as focus moves, so all the buttons fit on any TV.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        ) {
+            Button(onClick = vm::togglePlay, enabled = enabled, modifier = Modifier.focusRequester(playFocus)) {
                 Text(if (playing) "❚❚ Pause" else "▶ Play")
             }
-            if (vm.randomScope != null) {
-                Button(onClick = vm::playNextRandom) { Text("Next ⏭") }
+            if (vm.hasNext) {
+                Button(onClick = vm::playNext, enabled = enabled) { Text("Next ⏭") }
             }
-            Button(onClick = { vm.seekBy(-10_000) }) { Text("⟲ 10s") }
-            Button(onClick = { vm.seekBy(10_000) }) { Text("10s ⟳") }
+            Button(onClick = onBrowse, enabled = enabled, modifier = Modifier.focusRequester(browseButtonFocus)) {
+                Text("🎵 Pick next song")
+            }
+            if (song.uri != null) {
+                Button(onClick = { vm.setRandomAfterCurrent(vm.randomScope == null) }, enabled = enabled) {
+                    Text(if (vm.randomScope != null) "🔀 Random: On" else "🔀 Random: Off")
+                }
+            }
+            Button(onClick = { vm.seekBy(-10_000) }, enabled = enabled) { Text("⟲ 10s") }
+            Button(onClick = { vm.seekBy(10_000) }, enabled = enabled) { Text("10s ⟳") }
             // The offset is added to the playback position, so a positive value shows lyrics sooner.
-            Button(onClick = { vm.lyricOffsetMs += 250 }) { Text("Lyrics earlier") }
-            Button(onClick = { vm.lyricOffsetMs -= 250 }) { Text("Lyrics later") }
+            Button(onClick = { vm.lyricOffsetMs += 250 }, enabled = enabled) { Text("Lyrics earlier") }
+            Button(onClick = { vm.lyricOffsetMs -= 250 }, enabled = enabled) { Text("Lyrics later") }
             if (vm.lyrics is LyricsState.Found) {
-                Button(onClick = { setSearchingByHand(!searchingByHand) }) {
+                Button(onClick = { setSearchingByHand(!searchingByHand) }, enabled = enabled) {
                     Text(if (searchingByHand) "Back to lyrics" else "Wrong lyrics?")
                 }
             }
             if (song.uri != null) {
-                Button(onClick = vm::toggleVocals) { Text(if (vm.vocalsReduced) "Vocals: reduced" else "Vocals: normal") }
+                Button(onClick = vm::toggleVocals, enabled = enabled) {
+                    Text(if (vm.vocalsReduced) "Vocals: reduced" else "Vocals: normal")
+                }
             }
             Spacer(Modifier.width(8.dp))
             if (vm.lyricOffsetMs != 0L) {
